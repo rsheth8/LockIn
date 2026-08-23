@@ -17,6 +17,18 @@ final class AppState: ObservableObject {
         self.streak = store.loadStreak() ?? StreakStatus()
     }
 
+    /// Pulls the latest HealthKit weight (if due — see WeightSyncEngine.shouldSync)
+    /// and updates the profile before regenerating today's plan, so macro targets
+    /// track actual weight loss instead of staying pinned to onboarding-day numbers.
+    func syncWeightIfDue(healthKit: HealthKitManager) async {
+        guard WeightSyncEngine.shouldSync(profile: profile) else { return }
+        guard let updated = await WeightSyncEngine.sync(profile: profile, healthKit: healthKit) else { return }
+        await MainActor.run {
+            self.profile = updated
+            store.saveProfile(updated)
+        }
+    }
+
     /// Regenerates today's plan from calendar + profile. Call on launch,
     /// on profile change, and at local midnight (see ScheduleRefreshTask).
     func regenerateToday(calendarBusyBlocks: [BusyBlock]) {

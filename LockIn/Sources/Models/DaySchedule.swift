@@ -1,7 +1,7 @@
 import Foundation
 
 enum EventKind: String, Codable {
-    case wake, caffeine, meal, mealPrep, workout, windDown, sleep, weighIn, hydration, custom
+    case wake, caffeine, meal, mealPrep, workout, windDown, sleep, weighIn, progressPhoto, hydration, custom
 }
 
 struct ScheduledEvent: Codable, Identifiable, Equatable {

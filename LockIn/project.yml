@@ -26,6 +26,7 @@ targets:
         NSCalendarsFullAccessUsageDescription: "LockIn reads your calendar to schedule meals and workouts around class/work without conflicts."
         NSUserNotificationsUsageDescription: "LockIn sends reminders and accountability check-ins to keep you on schedule."
         NSFaceIDUsageDescription: "Used to quickly confirm check-ins."
+        NSCameraUsageDescription: "LockIn takes a daily progress photo, stored only on this device, so you can see your physical changes over time."
         UIBackgroundModes:
           - fetch
           - processing

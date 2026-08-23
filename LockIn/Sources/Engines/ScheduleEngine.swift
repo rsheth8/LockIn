@@ -15,6 +15,8 @@ enum ScheduleEngine {
 
         events.append(ScheduledEvent(kind: .weighIn, title: "Weigh-in", detail: "Same time, same conditions, every day — trend matters more than one reading.", time: calendar.date(byAdding: .minute, value: 5, to: sleepPlan.targetWakeTime)!, durationMinutes: 2, isCritical: true))
 
+        events.append(ScheduledEvent(kind: .progressPhoto, title: "Progress photo", detail: "Same spot, same lighting, same pose as yesterday — open Progress tab. This is the evidence, not the scale.", time: calendar.date(byAdding: .minute, value: 8, to: sleepPlan.targetWakeTime)!, durationMinutes: 2, isCritical: false))
+
         let meals = MealEngine.buildDay(macros: macros, southAsianVegetarian: profile.southAsianVegetarian)
         let mealTimes: [MealSlot: Date] = [
             .breakfast: calendar.date(byAdding: .minute, value: 45, to: sleepPlan.targetWakeTime)!,

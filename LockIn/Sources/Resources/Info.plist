@@ -22,6 +22,8 @@
 	<string>LockIn reads your calendar to schedule meals and workouts around class/work without conflicts.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>LockIn reads your calendar to schedule meals and workouts around class/work without conflicts.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>LockIn takes a daily progress photo, stored only on this device, so you can see your physical changes over time.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Used to quickly confirm check-ins.</string>
 	<key>NSHealthShareUsageDescription</key>
