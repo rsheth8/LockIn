@@ -8,6 +8,9 @@ import SwiftUI
 /// the home-screen widget, and the Watch complication.
 struct PromiseGrid: View {
     let records: [DayRecord]
+    /// Kept days render in the user's chosen highlight colour, so the record of
+    /// what they did is the most personal surface in the app.
+    var keptColor: Color = Theme.kept
     /// Weeks of history to render. 13 ≈ a quarter, which is roughly the window
     /// of the 220→180 cut.
     var weeks: Int = 13
@@ -85,17 +88,19 @@ struct PromiseGrid: View {
             return Theme.signal.opacity(0.35 + 0.5 * record.adherence)
         }
         if record.adherence == 0 { return Theme.inkFaint }
-        return Theme.kept.opacity(0.25 + 0.75 * record.adherence)
+        return keptColor.opacity(0.25 + 0.75 * record.adherence)
     }
 }
 
 /// Compact legend so the fill language is learnable at a glance.
 struct PromiseGridLegend: View {
+    var keptColor: Color = Theme.kept
+
     var body: some View {
         HStack(spacing: 10) {
             legendItem(color: Theme.inkFaint, label: "Nothing")
-            legendItem(color: Theme.kept.opacity(0.55), label: "Partial")
-            legendItem(color: Theme.kept, label: "Clean")
+            legendItem(color: keptColor.opacity(0.55), label: "Partial")
+            legendItem(color: keptColor, label: "Clean")
             legendItem(color: Theme.signal.opacity(0.7), label: "Broken")
         }
     }

@@ -2,10 +2,12 @@ import SwiftUI
 import FamilyControls
 
 /// Everything tunable in one ledger-styled list: who you are, how hard the app
-/// pushes, and what it guards during lock-in blocks.
+/// pushes, how it looks, and what it guards during lock-in blocks.
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var screenTimeManager: ScreenTimeManager
+    @EnvironmentObject var accountManager: AccountManager
+    @Environment(\.accent) private var accent
     @State private var showingPicker = false
 
     var body: some View {
@@ -15,10 +17,12 @@ struct SettingsView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 30) {
                     ScreenHeader(title: "Settings", subtitle: "How the app treats you")
+                    accentSection
                     toneSection
                     targetsSection
                     screenTimeSection
                     goalsSection
+                    accountSection
                 }
                 .padding(.horizontal, Theme.gutter)
                 .padding(.top, 8)
@@ -29,6 +33,67 @@ struct SettingsView: View {
             get: { screenTimeManager.selection },
             set: { screenTimeManager.saveSelection($0) }
         ))
+    }
+
+    // MARK: - Accent
+
+    private var accentSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Highlight colour").ledgerLabel()
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 8), spacing: 12) {
+                ForEach(AppAccent.allCases) { option in
+                    Button {
+                        Haptics.tap()
+                        var updated = appState.profile
+                        updated.accentColor = option
+                        withAnimation(.snappy) { appState.saveProfile(updated) }
+                    } label: {
+                        Circle()
+                            .fill(option.color)
+                            .frame(height: 32)
+                            .overlay(
+                                Circle().strokeBorder(Theme.ink, lineWidth: appState.profile.accentColor == option ? 2 : 0)
+                                    .padding(-3)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Text("Used for highlights and your streak. The alert red stays fixed — it only ever means you're slipping, so it shouldn't blend in with your colour.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - Account
+
+    private var accountSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Account").ledgerLabel()
+            VStack(spacing: 0) {
+                row("Status", accountManager.isSignedIn ? "Signed in" : "On this device")
+                LedgerRule()
+                row("Recipes", Secrets.hasSpoonacular ? "Spoonacular" : "Built-in database")
+            }
+            Text(accountManager.isSignedIn
+                 ? "Your plan syncs to your own private iCloud. Progress photos stay on this device only."
+                 : "Everything is stored on this device. Sign in to carry your plan to a new phone.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                Haptics.tap()
+                accountManager.signOut()
+            } label: {
+                Text(accountManager.isSignedIn ? "Sign out" : "Set up an account")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.signal)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     // MARK: - Tone

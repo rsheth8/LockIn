@@ -6,6 +6,7 @@ import SwiftUI
 /// instrument panel rather than a to-do list.
 struct TodayView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.accent) private var accent
     var onOpenProgressPhoto: () -> Void
 
     var body: some View {
@@ -50,7 +51,7 @@ struct TodayView: View {
             Text("DAY \(appState.streak.currentStreakDays)")
                 .font(Theme.mono(11, weight: .semibold))
                 .tracking(Theme.labelTracking)
-                .foregroundStyle(appState.streak.currentStreakDays > 0 ? Theme.ink : Theme.inkMuted)
+                .foregroundStyle(appState.streak.currentStreakDays > 0 ? accent.color : Theme.inkMuted)
         }
         .padding(.top, 8)
     }
@@ -88,7 +89,8 @@ struct TodayView: View {
                 vital(
                     label: "Streak",
                     value: "\(appState.streak.currentStreakDays)",
-                    detail: "best \(appState.streak.longestStreakDays)"
+                    detail: "best \(appState.streak.longestStreakDays)",
+                    valueColor: appState.streak.currentStreakDays > 0 ? accent.color : Theme.ink
                 )
                 vital(
                     label: "Weight",
@@ -101,12 +103,12 @@ struct TodayView: View {
         }
     }
 
-    private func vital(label: String, value: String, detail: String) -> some View {
+    private func vital(label: String, value: String, detail: String, valueColor: Color = Theme.ink) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label).ledgerLabel()
             Text(value)
                 .font(Theme.mono(22, weight: .semibold))
-                .foregroundStyle(Theme.ink)
+                .foregroundStyle(valueColor)
             Text(detail)
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.inkMuted)

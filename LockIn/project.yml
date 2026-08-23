@@ -27,13 +27,13 @@ targets:
         # ("Lockln"). The in-app wordmark uses the uppercase treatment for the
         # same reason — see Wordmark in ScreenHeader.swift.
         CFBundleDisplayName: "Lock In"
-        NSHealthShareUsageDescription: "LockIn reads your weight, workouts, and sleep from Health to track progress toward your goal."
-        NSHealthUpdateUsageDescription: "LockIn logs workouts and weight to Health so everything stays in sync."
-        NSCalendarsUsageDescription: "LockIn reads your calendar to schedule meals and workouts around class/work without conflicts."
-        NSCalendarsFullAccessUsageDescription: "LockIn reads your calendar to schedule meals and workouts around class/work without conflicts."
-        NSUserNotificationsUsageDescription: "LockIn sends reminders and accountability check-ins to keep you on schedule."
+        NSHealthShareUsageDescription: "Lock In reads your weight, workouts, and sleep from Health to track progress toward your goal."
+        NSHealthUpdateUsageDescription: "Lock In logs workouts and weight to Health so everything stays in sync."
+        NSCalendarsUsageDescription: "Lock In reads your calendar to schedule meals and workouts around class/work without conflicts."
+        NSCalendarsFullAccessUsageDescription: "Lock In reads your calendar to schedule meals and workouts around class/work without conflicts."
+        NSUserNotificationsUsageDescription: "Lock In sends reminders and accountability check-ins to keep you on schedule."
         NSFaceIDUsageDescription: "Used to quickly confirm check-ins."
-        NSCameraUsageDescription: "LockIn takes a daily progress photo, stored only on this device, so you can see your physical changes over time."
+        NSCameraUsageDescription: "Lock In takes a daily progress photo, stored only on this device, so you can see your physical changes over time."
         UIBackgroundModes:
           - fetch
           - processing
@@ -42,6 +42,12 @@ targets:
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.family-controls: true
+        com.apple.developer.applesignin:
+          - Default
+        com.apple.developer.icloud-services:
+          - CloudKit
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.rahilsheth.lockin
         com.apple.security.application-groups:
           - group.com.rahilsheth.lockin
     settings:
@@ -60,6 +66,9 @@ targets:
       - path: Sources/Models
       - path: Sources/Shared
       - path: Sources/Engines/AccountabilityEngine.swift
+      # UserProfile references AppAccent, so the extension needs it in scope
+      # even though the extension itself never renders a colour.
+      - path: Sources/Design/AppAccent.swift
     info:
       path: MonitorExtension/Info.plist
       properties:

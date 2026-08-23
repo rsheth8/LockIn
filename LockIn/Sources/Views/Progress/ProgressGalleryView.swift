@@ -7,6 +7,7 @@ import Charts
 /// behaviour is the thing you control, weight is only the lagging indicator.
 struct ProgressGalleryView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.accent) private var accent
     @Binding var launchCameraOnAppear: Bool
     @State private var photos: [ProgressPhoto] = []
     @State private var showingCamera = false
@@ -76,8 +77,8 @@ struct ProgressGalleryView: View {
     private var promiseSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeader("Promises", trailing: cleanDaysSummary)
-            PromiseGrid(records: appState.dayRecords)
-            PromiseGridLegend()
+            PromiseGrid(records: appState.dayRecords, keptColor: accent.color)
+            PromiseGridLegend(keptColor: accent.color)
         }
     }
 

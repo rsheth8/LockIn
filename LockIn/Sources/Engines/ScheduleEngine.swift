@@ -4,7 +4,9 @@ import Foundation
 /// scheduled earlier when a food needs soak/marinate/cook lead time) -> workout
 /// slotted into the largest open gap between calendar busy blocks -> wind-down -> sleep.
 enum ScheduleEngine {
-    static func buildDay(profile: UserProfile, macros: MacroTargets, sleepPlan: SleepPlan, busyBlocks: [BusyBlock], date: Date) -> DaySchedule {
+    /// `liveMeals` carries Spoonacular results when they're available; passing
+    /// nil falls back to the built-in database so the day always builds.
+    static func buildDay(profile: UserProfile, macros: MacroTargets, sleepPlan: SleepPlan, busyBlocks: [BusyBlock], date: Date, liveMeals: [Meal]? = nil) -> DaySchedule {
         let calendar = Calendar.current
         var events: [ScheduledEvent] = []
 
@@ -17,7 +19,7 @@ enum ScheduleEngine {
 
         events.append(ScheduledEvent(kind: .progressPhoto, title: "Progress photo", detail: "Same spot, same lighting, same pose as yesterday — open Progress tab. This is the evidence, not the scale.", time: calendar.date(byAdding: .minute, value: 8, to: sleepPlan.targetWakeTime)!, durationMinutes: 2, isCritical: false))
 
-        let meals = MealEngine.buildDay(macros: macros, southAsianVegetarian: profile.southAsianVegetarian)
+        let meals = liveMeals ?? MealEngine.buildDay(macros: macros, profile: profile)
         let mealTimes: [MealSlot: Date] = [
             .breakfast: calendar.date(byAdding: .minute, value: 45, to: sleepPlan.targetWakeTime)!,
             .lunch: calendar.date(bySettingHour: 13, minute: 0, second: 0, of: date)!,

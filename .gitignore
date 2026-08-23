@@ -7,3 +7,6 @@ xcuserdata/
 
 # Local build output from simulator runs
 LockIn/build/
+
+# API keys — never commit
+LockIn/Sources/Resources/Secrets.plist

@@ -14,10 +14,36 @@ final class AppState: ObservableObject {
     private let store = PersistenceStore.shared
 
     init() {
-        self.profile = store.loadProfile() ?? UserProfile.default
+        self.profile = store.loadProfile() ?? UserProfile.blank
         self.onboardingComplete = store.loadProfile() != nil
         self.streak = store.loadStreak() ?? StreakStatus()
         self.dayRecords = store.loadDayRecords()
+    }
+
+    /// Pulls an existing plan out of the signed-in user's private iCloud —
+    /// the "new phone / reinstall" path, so they don't redo the quiz.
+    func restoreFromCloudIfAvailable() async {
+        guard !onboardingComplete else { return }
+        guard let restored = await CloudSyncEngine.shared.fetchProfileForCurrentUser() else { return }
+        let records = await CloudSyncEngine.shared.fetchDayRecords(profileID: restored.id)
+        await MainActor.run {
+            self.profile = restored
+            self.dayRecords = records
+            store.saveProfile(restored)
+            store.saveDayRecords(records)
+            self.onboardingComplete = true
+        }
+    }
+
+    /// Mirrors local state up to private iCloud. Fire-and-forget: sync failures
+    /// must never block the UI, and the local store stays authoritative.
+    func pushToCloud() {
+        let profile = self.profile
+        let records = self.dayRecords
+        Task.detached {
+            await CloudSyncEngine.shared.pushProfile(profile)
+            await CloudSyncEngine.shared.pushDayRecords(records, profileID: profile.id)
+        }
     }
 
     // MARK: - Derived state for the UI
@@ -73,7 +99,7 @@ final class AppState: ObservableObject {
     /// every confirmation made earlier in the day on the next app launch, which
     /// silently destroys the streak. Statuses are carried across by matching
     /// kind + title, which is stable for a given day's plan.
-    func regenerateToday(calendarBusyBlocks: [BusyBlock]) {
+    func regenerateToday(calendarBusyBlocks: [BusyBlock], liveMeals: [Meal]? = nil) {
         let macros = MetabolicEngine.dailyTargets(for: profile)
         let sleep = SleepEngine.plan(for: profile, busyBlocks: calendarBusyBlocks)
         var schedule = ScheduleEngine.buildDay(
@@ -81,7 +107,8 @@ final class AppState: ObservableObject {
             macros: macros,
             sleepPlan: sleep,
             busyBlocks: calendarBusyBlocks,
-            date: Date()
+            date: Date(),
+            liveMeals: liveMeals
         )
 
         if let saved = store.loadSchedule(), Calendar.current.isDateInToday(saved.date) {
@@ -103,6 +130,7 @@ final class AppState: ObservableObject {
         store.saveProfile(profile)
         onboardingComplete = true
         syncToneToMonitorExtension()
+        pushToCloud()
     }
 
     // MARK: - Screen Time distraction events

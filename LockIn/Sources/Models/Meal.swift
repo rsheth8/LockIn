@@ -53,12 +53,16 @@ struct Meal: Codable, Equatable, Identifiable {
     let slot: MealSlot
     let name: String
     var components: [MealComponent]
+    /// Set when this meal came from Spoonacular, so the UI can offer the full
+    /// recipe and ingredient list on demand.
+    var spoonacularID: Int?
 
-    init(id: UUID = UUID(), slot: MealSlot, name: String, components: [MealComponent]) {
+    init(id: UUID = UUID(), slot: MealSlot, name: String, components: [MealComponent], spoonacularID: Int? = nil) {
         self.id = id
         self.slot = slot
         self.name = name
         self.components = components
+        self.spoonacularID = spoonacularID
     }
 
     var totalMacros: MacroTargetsLite {
