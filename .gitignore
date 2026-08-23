@@ -1,0 +1,6 @@
+.DS_Store
+LockIn/LockIn.xcodeproj/
+LockIn/build/
+LockIn/DerivedData/
+*.xcuserstate
+xcuserdata/

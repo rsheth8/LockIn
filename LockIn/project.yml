@@ -1,0 +1,50 @@
+name: LockIn
+options:
+  bundleIdPrefix: com.rahilsheth
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  DEVELOPMENT_TEAM: "" # fill in your Apple Developer Team ID
+targets:
+  LockIn:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+        excludes:
+          - "**/.DS_Store"
+    resources:
+      - path: Resources
+    info:
+      path: Sources/Resources/Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSHealthShareUsageDescription: "LockIn reads your weight, workouts, and sleep from Health to track progress toward your goal."
+        NSHealthUpdateUsageDescription: "LockIn logs workouts and weight to Health so everything stays in sync."
+        NSCalendarsUsageDescription: "LockIn reads your calendar to schedule meals and workouts around class/work without conflicts."
+        NSCalendarsFullAccessUsageDescription: "LockIn reads your calendar to schedule meals and workouts around class/work without conflicts."
+        NSUserNotificationsUsageDescription: "LockIn sends reminders and accountability check-ins to keep you on schedule."
+        NSFaceIDUsageDescription: "Used to quickly confirm check-ins."
+        UIBackgroundModes:
+          - fetch
+          - processing
+    entitlements:
+      path: Sources/Resources/LockIn.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.family-controls: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rahilsheth.lockin
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        ENABLE_PREVIEWS: true
+schemes:
+  LockIn:
+    build:
+      targets:
+        LockIn: all
+    run:
+      config: Debug
