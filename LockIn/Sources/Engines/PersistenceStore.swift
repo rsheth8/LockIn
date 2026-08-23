@@ -8,7 +8,7 @@ final class PersistenceStore {
     private let defaults = UserDefaults.standard
 
     private enum Key: String {
-        case profile, schedule, streak, progressPhotos
+        case profile, schedule, streak, progressPhotos, dayRecords
     }
 
     func saveProfile(_ profile: UserProfile) {
@@ -41,6 +41,14 @@ final class PersistenceStore {
 
     func loadProgressPhotos() -> [ProgressPhoto] {
         load([ProgressPhoto].self, key: .progressPhotos) ?? []
+    }
+
+    func saveDayRecords(_ records: [DayRecord]) {
+        save(records, key: .dayRecords)
+    }
+
+    func loadDayRecords() -> [DayRecord] {
+        load([DayRecord].self, key: .dayRecords) ?? []
     }
 
     private func save<T: Encodable>(_ value: T, key: Key) {

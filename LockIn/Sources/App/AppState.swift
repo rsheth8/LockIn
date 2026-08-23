@@ -8,6 +8,8 @@ final class AppState: ObservableObject {
     @Published var todaySchedule: DaySchedule?
     @Published var streak: StreakStatus = StreakStatus()
     @Published var onboardingComplete: Bool
+    /// Full adherence history, oldest first — backs the promise grid.
+    @Published var dayRecords: [DayRecord] = []
 
     private let store = PersistenceStore.shared
 
@@ -15,6 +17,40 @@ final class AppState: ObservableObject {
         self.profile = store.loadProfile() ?? UserProfile.default
         self.onboardingComplete = store.loadProfile() != nil
         self.streak = store.loadStreak() ?? StreakStatus()
+        self.dayRecords = store.loadDayRecords()
+    }
+
+    // MARK: - Derived state for the UI
+
+    /// The event the hero card should be showing: the next thing still pending.
+    /// Falls back to the last event of the day once everything is resolved, so
+    /// the card never goes blank mid-evening.
+    var currentEvent: ScheduledEvent? {
+        guard let events = todaySchedule?.events else { return nil }
+        let pending = events.filter { $0.status == .pending || $0.status == .snoozed }
+        return pending.min(by: { abs($0.time.timeIntervalSinceNow) < abs($1.time.timeIntervalSinceNow) })
+            ?? events.last
+    }
+
+    var criticalEventsToday: [ScheduledEvent] {
+        todaySchedule?.events.filter { $0.isCritical } ?? []
+    }
+
+    var confirmedCriticalToday: Int {
+        criticalEventsToday.filter { $0.status == .confirmed }.count
+    }
+
+    /// The coach line for the current moment — a callout if something's been
+    /// blown off, a milestone win if one just landed, otherwise nothing (silence
+    /// is better than filler; constant chatter makes the real hits land softer).
+    var coachLine: String? {
+        if let missed = todaySchedule?.events.first(where: { $0.status == .missed && $0.isCritical }) {
+            return AccountabilityEngine.message(for: missed, tier: 2, tone: profile.toneIntensity, streak: streak)
+        }
+        if let win = AccountabilityEngine.winMessage(streak: streak) {
+            return win
+        }
+        return nil
     }
 
     /// Pulls the latest HealthKit weight (if due — see WeightSyncEngine.shouldSync)
@@ -31,18 +67,35 @@ final class AppState: ObservableObject {
 
     /// Regenerates today's plan from calendar + profile. Call on launch,
     /// on profile change, and at local midnight (see ScheduleRefreshTask).
+    ///
+    /// Check-ins survive a rebuild: the generated plan is structural, but the
+    /// statuses on it are the user's actual work. Regenerating blind would wipe
+    /// every confirmation made earlier in the day on the next app launch, which
+    /// silently destroys the streak. Statuses are carried across by matching
+    /// kind + title, which is stable for a given day's plan.
     func regenerateToday(calendarBusyBlocks: [BusyBlock]) {
         let macros = MetabolicEngine.dailyTargets(for: profile)
         let sleep = SleepEngine.plan(for: profile, busyBlocks: calendarBusyBlocks)
-        let schedule = ScheduleEngine.buildDay(
+        var schedule = ScheduleEngine.buildDay(
             profile: profile,
             macros: macros,
             sleepPlan: sleep,
             busyBlocks: calendarBusyBlocks,
             date: Date()
         )
+
+        if let saved = store.loadSchedule(), Calendar.current.isDateInToday(saved.date) {
+            for index in schedule.events.indices {
+                let event = schedule.events[index]
+                if let previous = saved.events.first(where: { $0.kind == event.kind && $0.title == event.title }) {
+                    schedule.events[index].status = previous.status
+                }
+            }
+        }
+
         self.todaySchedule = schedule
         store.saveSchedule(schedule)
+        recordToday(schedule: schedule)
     }
 
     func saveProfile(_ profile: UserProfile) {
@@ -66,8 +119,14 @@ final class AppState: ObservableObject {
             streak.currentStreakDays = 0
             streak.lastMissedEvent = "Distracted during \(event.blockLabel)"
             streak.missedCheckInsThisWeek += 1
+
+            let key = DayRecord.key(for: event.date)
+            if let index = dayRecords.firstIndex(where: { $0.dayKey == key }) {
+                dayRecords[index].distractionEvents += 1
+            }
         }
         store.saveStreak(streak)
+        store.saveDayRecords(dayRecords)
     }
 
     /// The monitor extension can't read the main app's UserDefaults, so the
@@ -102,7 +161,32 @@ final class AppState: ObservableObject {
         schedule.events[index].status = status
         todaySchedule = schedule
         store.saveSchedule(schedule)
+        recordToday(schedule: schedule)
         evaluateStreak(schedule: schedule)
+    }
+
+    /// Mirrors today's live schedule into the permanent adherence ledger after
+    /// every change, so the promise grid stays accurate even if the app is
+    /// killed before midnight.
+    private func recordToday(schedule: DaySchedule) {
+        let key = DayRecord.key(for: schedule.date)
+        let critical = schedule.events.filter { $0.isCritical }
+        let record = DayRecord(
+            dayKey: key,
+            date: schedule.date,
+            criticalTotal: critical.count,
+            criticalConfirmed: critical.filter { $0.status == .confirmed }.count,
+            criticalMissed: critical.filter { $0.status == .missed }.count,
+            distractionEvents: dayRecords.first(where: { $0.dayKey == key })?.distractionEvents ?? 0,
+            weightLbs: profile.currentWeightLbs
+        )
+
+        if let existing = dayRecords.firstIndex(where: { $0.dayKey == key }) {
+            dayRecords[existing] = record
+        } else {
+            dayRecords.append(record)
+        }
+        store.saveDayRecords(dayRecords)
     }
 
     /// A day counts toward the streak once every critical event in it is confirmed

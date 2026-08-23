@@ -4,3 +4,6 @@ LockIn/build/
 LockIn/DerivedData/
 *.xcuserstate
 xcuserdata/
+
+# Local build output from simulator runs
+LockIn/build/

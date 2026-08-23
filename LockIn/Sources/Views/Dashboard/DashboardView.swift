@@ -1,11 +1,29 @@
 import SwiftUI
 
-/// Top-level tab shell: today's schedule/check-ins, and the progress-photo
-/// gallery. Tapping the "Progress photo" event on Today jumps straight to the
-/// camera on the Progress tab instead of just switching tabs and stopping.
+/// Three surfaces, in the order they matter: what to do now, the record that
+/// proves you did it, and the controls. Tapping the "Progress photo" event on
+/// Today jumps straight into the camera rather than just switching tabs.
 struct DashboardView: View {
     @State private var selectedTab = 0
     @State private var pendingCameraLaunch = false
+
+    init() {
+        // The Ledger stays dark-forward and quiet — the system chrome shouldn't
+        // introduce a second visual language on top of it.
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(Theme.ground)
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+
+        let nav = UINavigationBarAppearance()
+        nav.configureWithOpaqueBackground()
+        nav.backgroundColor = UIColor(Theme.ground)
+        nav.titleTextAttributes = [.foregroundColor: UIColor(Theme.ink)]
+        nav.largeTitleTextAttributes = [.foregroundColor: UIColor(Theme.ink)]
+        UINavigationBar.appearance().standardAppearance = nav
+        UINavigationBar.appearance().scrollEdgeAppearance = nav
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -13,20 +31,21 @@ struct DashboardView: View {
                 pendingCameraLaunch = true
                 selectedTab = 1
             })
-            .tabItem { Label("Today", systemImage: "checklist") }
+            .tabItem { Label("Today", systemImage: "circle.righthalf.filled") }
             .tag(0)
 
-            NavigationStack {
-                ProgressGalleryView(launchCameraOnAppear: $pendingCameraLaunch)
-            }
-            .tabItem { Label("Progress", systemImage: "camera.fill") }
-            .tag(1)
+            // No NavigationStack on these two: the system nav bar reserves a
+            // large-title area the Ledger doesn't use, leaving dead space at the
+            // top. Each screen draws its own in-content header instead, so all
+            // three tabs share one header language.
+            ProgressGalleryView(launchCameraOnAppear: $pendingCameraLaunch)
+                .tabItem { Label("Record", systemImage: "square.grid.3x3.fill") }
+                .tag(1)
 
-            NavigationStack {
-                ScreenTimeSettingsView()
-            }
-            .tabItem { Label("Settings", systemImage: "gearshape.fill") }
-            .tag(2)
+            SettingsView()
+                .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+                .tag(2)
         }
+        .tint(Theme.ink)
     }
 }

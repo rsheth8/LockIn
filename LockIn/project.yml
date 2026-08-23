@@ -23,6 +23,10 @@ targets:
       path: Sources/Resources/Info.plist
       properties:
         UILaunchScreen: {}
+        # Spaced so system dialogs don't render the capital I as a lowercase L
+        # ("Lockln"). The in-app wordmark uses the uppercase treatment for the
+        # same reason — see Wordmark in ScreenHeader.swift.
+        CFBundleDisplayName: "Lock In"
         NSHealthShareUsageDescription: "LockIn reads your weight, workouts, and sleep from Health to track progress toward your goal."
         NSHealthUpdateUsageDescription: "LockIn logs workouts and weight to Health so everything stays in sync."
         NSCalendarsUsageDescription: "LockIn reads your calendar to schedule meals and workouts around class/work without conflicts."

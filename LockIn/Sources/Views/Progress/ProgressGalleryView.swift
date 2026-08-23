@@ -1,6 +1,10 @@
 import SwiftUI
 import UIKit
+import Charts
 
+/// The evidence tab: the promise grid (what you did), the weight trend (what it
+/// produced), and the photo record (what it looks like). Grid first on purpose —
+/// behaviour is the thing you control, weight is only the lagging indicator.
 struct ProgressGalleryView: View {
     @EnvironmentObject var appState: AppState
     @Binding var launchCameraOnAppear: Bool
@@ -9,51 +13,39 @@ struct ProgressGalleryView: View {
     @State private var showingCameraUnavailableAlert = false
     @State private var selectedPhoto: ProgressPhoto?
 
-    private let columns = [GridItem(.adaptive(minimum: 100), spacing: 4)]
     private let store = ProgressPhotoStore.shared
+    private let columns = [GridItem(.adaptive(minimum: 104), spacing: 3)]
 
     var body: some View {
-        ScrollView {
-            if photos.count >= 2 {
-                CompareRow(first: photos.first!, latest: photos.last!, store: store)
-                    .padding(.horizontal)
-                    .padding(.top)
-            }
+        ZStack {
+            Theme.ground.ignoresSafeArea()
 
-            LazyVGrid(columns: columns, spacing: 4) {
-                ForEach(photos.reversed()) { photo in
-                    Button {
-                        selectedPhoto = photo
-                    } label: {
-                        thumbnail(for: photo)
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 30) {
+                    ScreenHeader(title: "Record", subtitle: "What you actually did") {
+                        Button(action: launchCamera) {
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Theme.surface)
+                                .frame(width: 42, height: 42)
+                                .background(Theme.ink, in: Circle())
+                        }
+                        .buttonStyle(.plain)
                     }
+                    promiseSection
+                    weightSection
+                    photoSection
                 }
-            }
-            .padding(.horizontal, 4)
-            .padding(.top)
-
-            if photos.isEmpty {
-                ContentUnavailableFallback()
-                    .padding(.top, 60)
-            }
-        }
-        .navigationTitle("Progress Photos")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        showingCamera = true
-                    } else {
-                        showingCameraUnavailableAlert = true
-                    }
-                } label: {
-                    Image(systemName: "camera.fill")
-                }
+                .padding(.horizontal, Theme.gutter)
+                .padding(.top, 8)
+                // Clears the floating tab bar so the last row isn't trapped under it.
+                .padding(.bottom, 96)
             }
         }
         .fullScreenCover(isPresented: $showingCamera) {
             CameraCaptureView { image in
                 store.save(image, weightLbsAtCapture: appState.profile.currentWeightLbs)
+                Haptics.confirm()
                 reload()
             }
             .ignoresSafeArea()
@@ -65,7 +57,7 @@ struct ProgressGalleryView: View {
                 reload()
             }
         }
-        .alert("Camera Unavailable", isPresented: $showingCameraUnavailableAlert) {
+        .alert("No Camera", isPresented: $showingCameraUnavailableAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("This device (likely the Simulator) has no camera. Try a real iPhone.")
@@ -74,42 +66,168 @@ struct ProgressGalleryView: View {
             reload()
             if launchCameraOnAppear {
                 launchCameraOnAppear = false
-                if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                    showingCamera = true
-                } else {
-                    showingCameraUnavailableAlert = true
+                launchCamera()
+            }
+        }
+    }
+
+    // MARK: - Promise grid
+
+    private var promiseSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Promises", trailing: cleanDaysSummary)
+            PromiseGrid(records: appState.dayRecords)
+            PromiseGridLegend()
+        }
+    }
+
+    private var cleanDaysSummary: String {
+        let clean = appState.dayRecords.filter { $0.isClean }.count
+        let tracked = appState.dayRecords.filter { $0.criticalTotal > 0 }.count
+        guard tracked > 0 else { return "—" }
+        return "\(clean)/\(tracked) clean"
+    }
+
+    // MARK: - Weight trend
+
+    private var weightSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Weight", trailing: weightDeltaSummary)
+
+            if appState.profile.weightHistory.count < 2 {
+                emptyNote("Two weigh-ins and this becomes a trend line. Right now it's a dot.")
+            } else {
+                Chart {
+                    ForEach(appState.profile.weightHistory, id: \.date) { entry in
+                        LineMark(x: .value("Date", entry.date), y: .value("Weight", entry.weightLbs))
+                            .interpolationMethod(.catmullRom)
+                            .foregroundStyle(Theme.ink)
+                        AreaMark(x: .value("Date", entry.date), y: .value("Weight", entry.weightLbs))
+                            .interpolationMethod(.catmullRom)
+                            .foregroundStyle(.linearGradient(
+                                colors: [Theme.ink.opacity(0.14), Theme.ink.opacity(0)],
+                                startPoint: .top, endPoint: .bottom
+                            ))
+                    }
+                    RuleMark(y: .value("Goal", appState.profile.goalWeightLbs))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        .foregroundStyle(Theme.signal)
+                        .annotation(position: .top, alignment: .leading) {
+                            Text("GOAL \(Int(appState.profile.goalWeightLbs))")
+                                .font(Theme.mono(9, weight: .semibold))
+                                .foregroundStyle(Theme.signal)
+                        }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading) { _ in
+                        AxisValueLabel().font(Theme.mono(9)).foregroundStyle(Theme.inkMuted)
+                        AxisGridLine().foregroundStyle(Theme.rule)
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks { _ in
+                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                            .font(Theme.mono(9)).foregroundStyle(Theme.inkMuted)
+                    }
+                }
+                .frame(height: 170)
+            }
+        }
+    }
+
+    /// Shows the delta once there's actually a delta to show — a lone weigh-in
+    /// rendering as "−0 lb" reads like failure rather than "no data yet".
+    private var weightDeltaSummary: String {
+        guard let first = appState.profile.weightHistory.first,
+              let last = appState.profile.weightHistory.last,
+              first.weightLbs != last.weightLbs else {
+            return "\(Int(appState.profile.currentWeightLbs)) lb"
+        }
+        let delta = last.weightLbs - first.weightLbs
+        let sign = delta < 0 ? "−" : "+"
+        return "\(sign)\(abs(Int(delta))) lb"
+    }
+
+    // MARK: - Photos
+
+    private var photoSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Photos", trailing: photos.isEmpty ? "—" : "\(photos.count)")
+
+            if photos.count >= 2, let first = photos.first, let latest = photos.last {
+                CompareRow(first: first, latest: latest, store: store)
+            }
+
+            if photos.isEmpty {
+                emptyNote("Same spot, same light, same pose — every day. The scale lies on any given morning; this doesn't.")
+            } else {
+                LazyVGrid(columns: columns, spacing: 3) {
+                    ForEach(photos.reversed()) { photo in
+                        Button { selectedPhoto = photo } label: { thumbnail(for: photo) }
+                            .buttonStyle(.plain)
+                    }
                 }
             }
+        }
+    }
+
+    private func thumbnail(for photo: ProgressPhoto) -> some View {
+        Group {
+            if let image = store.image(for: photo) {
+                Image(uiImage: image).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                Rectangle().fill(Theme.surfaceMuted)
+            }
+        }
+        .frame(height: 138)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(alignment: .bottomLeading) {
+            Text(photo.date, format: .dateTime.month(.abbreviated).day())
+                .font(Theme.mono(9, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5).padding(.vertical, 3)
+                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 4))
+                .padding(5)
+        }
+    }
+
+    // MARK: - Shared bits
+
+    private func sectionHeader(_ title: String, trailing: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).ledgerLabel()
+            Spacer()
+            Text(trailing)
+                .font(Theme.mono(12, weight: .semibold))
+                .foregroundStyle(Theme.ink)
+        }
+    }
+
+    private func emptyNote(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13))
+            .foregroundStyle(Theme.inkMuted)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func launchCamera() {
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            Haptics.tap()
+            showingCamera = true
+        } else {
+            showingCameraUnavailableAlert = true
         }
     }
 
     private func reload() {
         photos = store.allPhotosSortedByDate()
     }
-
-    private func thumbnail(for photo: ProgressPhoto) -> some View {
-        Group {
-            if let image = store.image(for: photo) {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } else {
-                Rectangle().fill(.secondary.opacity(0.2))
-            }
-        }
-        .frame(height: 130)
-        .clipped()
-        .overlay(alignment: .bottomLeading) {
-            Text(photo.date, format: .dateTime.month(.abbreviated).day())
-                .font(.caption2.weight(.semibold))
-                .padding(4)
-                .background(.black.opacity(0.5))
-                .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .padding(4)
-        }
-    }
 }
+
+// MARK: - Day 1 vs today
 
 private struct CompareRow: View {
     let first: ProgressPhoto
@@ -118,29 +236,41 @@ private struct CompareRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Day 1 vs Today").font(.headline)
-            HStack(spacing: 8) {
-                comparePane(photo: first, label: "First")
-                comparePane(photo: latest, label: "Latest")
+            HStack(spacing: 3) {
+                pane(photo: first, caption: "Day 1")
+                pane(photo: latest, caption: "Today")
             }
-            if let w1 = first.weightLbsAtCapture, let w2 = latest.weightLbsAtCapture {
-                Text("\(Int(w1)) lb → \(Int(w2)) lb  (\(w1 - w2 >= 0 ? "-" : "+")\(abs(Int(w1 - w2))) lb)")
-                    .font(.subheadline).foregroundStyle(.secondary)
+            if let w1 = first.weightLbsAtCapture, let w2 = latest.weightLbsAtCapture, w1 != w2 {
+                Text("\(Int(w1)) lb → \(Int(w2)) lb")
+                    .font(Theme.mono(12, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
             }
         }
     }
 
-    private func comparePane(photo: ProgressPhoto, label: String) -> some View {
-        VStack {
+    private func pane(photo: ProgressPhoto, caption: String) -> some View {
+        ZStack(alignment: .bottomLeading) {
             if let image = store.image(for: photo) {
                 Image(uiImage: image).resizable().aspectRatio(contentMode: .fill)
-                    .frame(height: 220).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(height: 230).clipped()
+            } else {
+                Rectangle().fill(Theme.surfaceMuted).frame(height: 230)
             }
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(caption)
+                .font(Theme.mono(9, weight: .semibold))
+                .tracking(1)
+                .textCase(.uppercase)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 4))
+                .padding(7)
         }
         .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
+
+// MARK: - Detail
 
 private struct PhotoDetailView: View {
     let photo: ProgressPhoto
@@ -150,34 +280,32 @@ private struct PhotoDetailView: View {
 
     var body: some View {
         NavigationStack {
-            VStack {
-                if let image = store.image(for: photo) {
-                    Image(uiImage: image).resizable().scaledToFit()
+            ZStack {
+                Theme.ground.ignoresSafeArea()
+                VStack(spacing: 14) {
+                    if let image = store.image(for: photo) {
+                        Image(uiImage: image).resizable().scaledToFit()
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    if let weight = photo.weightLbsAtCapture {
+                        Text("\(Int(weight)) lb")
+                            .font(Theme.mono(15, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                    }
                 }
-                if let weight = photo.weightLbsAtCapture {
-                    Text("\(Int(weight)) lb").font(.subheadline).foregroundStyle(.secondary)
-                }
+                .padding(Theme.gutter)
             }
             .navigationTitle(photo.date.formatted(date: .abbreviated, time: .omitted))
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Close") { dismiss() }.foregroundStyle(Theme.inkMuted)
                 }
                 ToolbarItem(placement: .destructiveAction) {
                     Button("Delete", role: .destructive, action: onDelete)
+                        .foregroundStyle(Theme.signal)
                 }
             }
-        }
-    }
-}
-
-private struct ContentUnavailableFallback: View {
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "camera.on.rectangle").font(.largeTitle).foregroundStyle(.secondary)
-            Text("No progress photos yet").font(.headline)
-            Text("Take one today — same spot, same lighting, same pose each day makes the comparison actually mean something.")
-                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.horizontal, 40)
         }
     }
 }
