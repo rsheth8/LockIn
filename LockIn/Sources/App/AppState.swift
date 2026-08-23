@@ -49,6 +49,32 @@ final class AppState: ObservableObject {
         self.profile = profile
         store.saveProfile(profile)
         onboardingComplete = true
+        syncToneToMonitorExtension()
+    }
+
+    // MARK: - Screen Time distraction events
+
+    /// The LockInMonitor extension writes here whenever you burn real time on
+    /// a shielded app during a lock-in block. Drain the queue on launch/foreground
+    /// so those events count against the streak just like a missed check-in.
+    func drainDistractionEvents() {
+        let events = AppGroup.pendingDistractionEvents()
+        guard !events.isEmpty else { return }
+        AppGroup.clearPendingDistractionEvents()
+
+        for event in events {
+            streak.currentStreakDays = 0
+            streak.lastMissedEvent = "Distracted during \(event.blockLabel)"
+            streak.missedCheckInsThisWeek += 1
+        }
+        store.saveStreak(streak)
+    }
+
+    /// The monitor extension can't read the main app's UserDefaults, so the
+    /// tone has to be mirrored into the shared App Group container whenever
+    /// it changes — call this after onboarding and after any settings change.
+    func syncToneToMonitorExtension() {
+        AppGroup.sharedDefaults.set(profile.toneIntensity.rawValue, forKey: AppGroup.Key.toneIntensity)
     }
 
     // MARK: - Check-ins

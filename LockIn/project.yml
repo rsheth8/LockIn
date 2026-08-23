@@ -16,6 +16,9 @@ targets:
           - "**/.DS_Store"
     resources:
       - path: Resources
+    dependencies:
+      - target: LockInMonitor
+        embed: true
     info:
       path: Sources/Resources/Info.plist
       properties:
@@ -35,6 +38,8 @@ targets:
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.family-controls: true
+        com.apple.security.application-groups:
+          - group.com.rahilsheth.lockin
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rahilsheth.lockin
@@ -42,10 +47,38 @@ targets:
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         ENABLE_PREVIEWS: true
+
+  LockInMonitor:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: MonitorExtension
+      - path: Sources/Models
+      - path: Sources/Shared
+      - path: Sources/Engines/AccountabilityEngine.swift
+    info:
+      path: MonitorExtension/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.deviceactivity.monitor-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).LockInMonitorExtension
+    entitlements:
+      path: MonitorExtension/LockInMonitor.entitlements
+      properties:
+        com.apple.developer.family-controls: true
+        com.apple.security.application-groups:
+          - group.com.rahilsheth.lockin
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rahilsheth.lockin.monitor
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
 schemes:
   LockIn:
     build:
       targets:
         LockIn: all
+        LockInMonitor: all
     run:
       config: Debug

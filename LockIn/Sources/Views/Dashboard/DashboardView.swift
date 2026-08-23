@@ -21,6 +21,12 @@ struct DashboardView: View {
             }
             .tabItem { Label("Progress", systemImage: "camera.fill") }
             .tag(1)
+
+            NavigationStack {
+                ScreenTimeSettingsView()
+            }
+            .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+            .tag(2)
         }
     }
 }

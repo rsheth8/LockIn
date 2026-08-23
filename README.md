@@ -52,17 +52,37 @@ your Apple Developer Team ID and re-run `xcodegen generate`.
   in `PersistenceStore`. Never touches the system Photos library.
 - **`NotificationManager`** — schedules primary + escalating local
   notifications per critical event.
-- Onboarding, Today (check-in) and Progress (camera + gallery + day-1-vs-today
-  compare) tabs.
+- **Screen Time distraction monitoring** (`LockInMonitor` — a second Xcode
+  target, since DeviceActivityMonitor extensions run in their own process):
+  pick distracting apps/categories in Settings, LockIn shields them for the
+  duration of today's workout window automatically, and if you burn real time
+  on them anyway (1-min cumulative threshold) the extension fires an
+  immediate tough-love notification and logs it — draining that log resets
+  your streak, same as a missed check-in. Main app and extension talk only
+  through an App Group container (`group.com.rahilsheth.lockin`,
+  `Sources/Shared/AppGroup.swift`); the extension never touches the network.
+- Onboarding, Today (check-in), Progress (camera + gallery + day-1-vs-today
+  compare), and Settings (Screen Time + tone) tabs.
 - Check-in confirmation (swipe to confirm/miss on Today), streak tracking.
+
+## Project structure note
+
+`LockInMonitor` (`LockIn/MonitorExtension/`) is a separate app-extension
+target — it needs the **Family Controls entitlement approved for your
+specific Apple Developer account** before Screen Time monitoring works on a
+real device (Settings → request from Apple; it's a manual review, not
+instant). Without that approval, `requestAuthorization` in
+`ScreenTimeManager` will fail gracefully and the rest of the app is
+unaffected — Screen Time is opt-in, not a hard dependency.
 
 ## What's next (not yet built)
 
 - Manual weigh-in entry UI that writes to HealthKit (currently weight only
   flows *in* from HealthKit — nothing logs a fresh reading from the app itself).
-- Screen Time / DeviceActivity monitoring for the "lock-in block" distraction
-  nudges (needs Family Controls entitlement approval from Apple — entitlement
-  is already declared in `project.yml`).
+- Extending lock-in blocks beyond the workout window to manually-started study
+  sessions (the `LockInBlock` model already supports arbitrary blocks —
+  `ScreenTimeManager.scheduleLockInBlock` just isn't called for anything but
+  today's workout yet).
 - Expand `FoodDatabase` with verified USDA/label macro data and more variety.
 - Apple Watch companion + widgets/Live Activities for the current event.
 - Real persistence (SwiftData) once weight/meal logs need history and queries.
