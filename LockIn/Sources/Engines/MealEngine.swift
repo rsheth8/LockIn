@@ -26,29 +26,41 @@ enum MealEngine {
         guard Secrets.hasSpoonacular, !RecipeCache.shared.isQuotaBlocked else { return nil }
 
         let signature = RecipeCache.signature(calories: macros.calories, profile: profile)
-        var pool = RecipeCache.shared.cachedPool(signature: signature)
+        // Floor the per-serving protein requirement at the day's average
+        // protein-per-meal so the pool can actually hit target.
+        let perMeal = max(Int(Double(macros.proteinGrams) / Double(max(profile.mealsPerDay, 1)) * 0.7), 15)
 
-        if pool == nil {
+        // Separate pools per meal type — a single untyped search returns dips
+        // and sauces, which are fine on macros but wrong as a lunch. Both are
+        // cached for the week, so this is two calls per week, not per day.
+        let neededTypes = Set(splits(mealsPerDay: profile.mealsPerDay)
+            .map { SpoonacularClient.MealType.forSlot($0.0) })
+
+        var pools: [SpoonacularClient.MealType: [SpoonacularRecipe]] = [:]
+        for type in neededTypes {
+            if let cached = RecipeCache.shared.cachedPool(signature: signature, bucket: type.rawValue) {
+                pools[type] = cached
+                continue
+            }
             do {
-                // Floor the per-serving protein requirement at the day's
-                // average protein-per-meal so the pool can actually hit target.
-                let perMeal = max(Int(Double(macros.proteinGrams) / Double(max(profile.mealsPerDay, 1)) * 0.7), 15)
                 let fetched = try await SpoonacularClient.shared.recipePool(
-                    profile: profile, minProteinPerServing: perMeal
+                    profile: profile, mealType: type, minProteinPerServing: perMeal
                 )
-                guard !fetched.isEmpty else { return nil }
-                RecipeCache.shared.store(pool: fetched, signature: signature)
-                pool = fetched
+                guard fetched.count >= SpoonacularClient.minimumUsablePool else { continue }
+                RecipeCache.shared.store(pool: fetched, signature: signature, bucket: type.rawValue)
+                pools[type] = fetched
             } catch SpoonacularClient.ClientError.quotaExceeded {
                 RecipeCache.shared.markQuotaExceeded()
                 return nil
             } catch {
-                return nil
+                continue
             }
         }
 
-        guard let pool, !pool.isEmpty else { return nil }
-        return assemble(from: pool, macros: macros, profile: profile, date: Date())
+        // Any slot without a usable pool falls back to the local database for
+        // that meal only, rather than discarding the whole day's live plan.
+        guard !pools.isEmpty else { return nil }
+        return assemble(from: pools, macros: macros, profile: profile, date: Date())
     }
 
     /// Picks the best-fitting recipe for each slot and scales servings to hit
@@ -57,7 +69,17 @@ enum MealEngine {
     /// Deterministic for a given day: the rotation offset comes from the date,
     /// so the plan doesn't reshuffle every time the view redraws, but does
     /// vary across the week.
-    static func assemble(from pool: [SpoonacularRecipe], macros: MacroTargets, profile: UserProfile, date: Date) -> [Meal] {
+    /// Convenience for a single undifferentiated pool (used by tests).
+    static func assemble(from pool: [SpoonacularRecipe], macros: MacroTargets,
+                         profile: UserProfile, date: Date) -> [Meal] {
+        let mapped = Dictionary(uniqueKeysWithValues:
+            Set(splits(mealsPerDay: profile.mealsPerDay).map { SpoonacularClient.MealType.forSlot($0.0) })
+                .map { ($0, pool) })
+        return assemble(from: mapped, macros: macros, profile: profile, date: date)
+    }
+
+    static func assemble(from pools: [SpoonacularClient.MealType: [SpoonacularRecipe]],
+                         macros: MacroTargets, profile: UserProfile, date: Date) -> [Meal] {
         let splits = splits(mealsPerDay: profile.mealsPerDay)
         let dayOffset = Calendar.current.ordinality(of: .day, in: .era, for: date) ?? 0
         var used = Set<Int>()
@@ -67,6 +89,7 @@ enum MealEngine {
             let targetCalories = Double(macros.calories) * fraction
             let targetProtein = Double(macros.proteinGrams) * fraction
 
+            let pool = pools[SpoonacularClient.MealType.forSlot(slot)] ?? []
             let available = pool.filter { !used.contains($0.id) }
             let searchSpace = available.isEmpty ? pool : available
 

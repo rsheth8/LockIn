@@ -264,10 +264,14 @@ private struct TimelineRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
+            // Wide enough for "12:15 PM" — at 54pt the meridiem wrapped onto a
+            // second line for any two-digit afternoon hour.
             Text(event.time, format: .dateTime.hour().minute())
                 .font(Theme.mono(11))
                 .foregroundStyle(Theme.inkMuted)
-                .frame(width: 54, alignment: .leading)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(width: 72, alignment: .leading)
                 .padding(.top, 2)
 
             marker

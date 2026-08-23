@@ -27,21 +27,23 @@ final class RecipeCache {
     /// A cached pool is reusable while it's under a week old AND was fetched
     /// for the same targets — changing your calorie goal or diet should
     /// invalidate it, otherwise you'd keep eating last week's numbers.
-    func cachedPool(signature: String) -> [SpoonacularRecipe]? {
-        guard let fetched = defaults.object(forKey: poolFetchedKey) as? Date,
+    /// Pools are cached per meal type, since breakfast and main-course searches
+    /// are separate queries.
+    func cachedPool(signature: String, bucket: String = "default") -> [SpoonacularRecipe]? {
+        guard let fetched = defaults.object(forKey: poolFetchedKey + bucket) as? Date,
               Date().timeIntervalSince(fetched) < 7 * 24 * 3600,
-              defaults.string(forKey: poolSignatureKey) == signature,
-              let data = defaults.data(forKey: poolKey),
+              defaults.string(forKey: poolSignatureKey + bucket) == signature,
+              let data = defaults.data(forKey: poolKey + bucket),
               let pool = try? JSONDecoder().decode([SpoonacularRecipe].self, from: data)
         else { return nil }
         return pool
     }
 
-    func store(pool: [SpoonacularRecipe], signature: String) {
+    func store(pool: [SpoonacularRecipe], signature: String, bucket: String = "default") {
         guard let data = try? JSONEncoder().encode(pool) else { return }
-        defaults.set(data, forKey: poolKey)
-        defaults.set(Date(), forKey: poolFetchedKey)
-        defaults.set(signature, forKey: poolSignatureKey)
+        defaults.set(data, forKey: poolKey + bucket)
+        defaults.set(Date(), forKey: poolFetchedKey + bucket)
+        defaults.set(signature, forKey: poolSignatureKey + bucket)
     }
 
     /// Identifies what a cached plan was generated for.
@@ -63,8 +65,10 @@ final class RecipeCache {
     }
 
     func clear() {
-        [poolKey, poolFetchedKey, poolSignatureKey, quotaBlockedKey].forEach {
-            defaults.removeObject(forKey: $0)
+        var keys = [quotaBlockedKey]
+        for bucket in ["default", "main course", "breakfast", "snack"] {
+            keys += [poolKey + bucket, poolFetchedKey + bucket, poolSignatureKey + bucket]
         }
+        keys.forEach { defaults.removeObject(forKey: $0) }
     }
 }

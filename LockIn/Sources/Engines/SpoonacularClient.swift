@@ -26,9 +26,61 @@ actor SpoonacularClient {
         case badResponse(status: Int)
     }
 
+    /// Minimum pool size worth using. Below this the day can't be varied and
+    /// the local database is the better answer.
+    static let minimumUsablePool = 8
+
     /// A pool of recipes matching the person's diet, each carrying full
     /// nutrition so meals can be macro-matched without further calls.
-    func recipePool(profile: UserProfile, minProteinPerServing: Int = 20, count: Int = 40) async throws -> [SpoonacularRecipe] {
+    ///
+    /// Filters are relaxed progressively because stacking them yields nothing:
+    /// `diet=vegetarian&cuisine=Indian&minProtein=31` returns *zero* results
+    /// against the live API, which silently sent every South-Asian vegetarian
+    /// user to the offline fallback forever. Cuisine is only a preference, so
+    /// it's dropped first; the protein floor is dropped last because macro
+    /// matching can partly compensate but an empty pool can't.
+    func recipePool(profile: UserProfile, mealType: MealType? = nil,
+                    minProteinPerServing: Int = 20, count: Int = 40) async throws -> [SpoonacularRecipe] {
+        guard Secrets.spoonacularKey != nil else { throw ClientError.missingKey }
+
+        let attempts: [(cuisine: Bool, minProtein: Int?)] = [
+            (cuisine: true, minProtein: minProteinPerServing),
+            (cuisine: false, minProtein: minProteinPerServing),
+            (cuisine: true, minProtein: nil),
+            (cuisine: false, minProtein: nil)
+        ]
+
+        var best: [SpoonacularRecipe] = []
+        for attempt in attempts {
+            let results = try await search(profile: profile, count: count, mealType: mealType,
+                                           includeCuisine: attempt.cuisine,
+                                           minProtein: attempt.minProtein)
+            if results.count > best.count { best = results }
+            if best.count >= Self.minimumUsablePool { break }
+        }
+        return best
+    }
+
+    /// Spoonacular's `type` parameter. Without it the search happily returns
+    /// dips, sauces and drinks, so lunch came back as "Herbed Goat Cheese
+    /// Yogurt Dip" — technically on-macro, obviously not a meal.
+    enum MealType: String {
+        case mainCourse = "main course"
+        case breakfast
+        case snack
+
+        /// Which slots each pool serves.
+        static func forSlot(_ slot: MealSlot) -> MealType {
+            switch slot {
+            case .breakfast: return .breakfast
+            case .lunch, .dinner: return .mainCourse
+            case .snack: return .snack
+            }
+        }
+    }
+
+    private func search(profile: UserProfile, count: Int, mealType: MealType?,
+                        includeCuisine: Bool, minProtein: Int?) async throws -> [SpoonacularRecipe] {
         guard let key = Secrets.spoonacularKey else { throw ClientError.missingKey }
 
         var components = URLComponents(string: "\(host)/recipes/complexSearch")!
@@ -36,13 +88,18 @@ actor SpoonacularClient {
             .init(name: "apiKey", value: key),
             .init(name: "number", value: String(count)),
             .init(name: "addRecipeNutrition", value: "true"),
-            .init(name: "minProtein", value: String(minProteinPerServing)),
             .init(name: "sort", value: "random")
         ]
+        if let mealType {
+            items.append(.init(name: "type", value: mealType.rawValue))
+        }
+        if let minProtein {
+            items.append(.init(name: "minProtein", value: String(minProtein)))
+        }
         if let diet = profile.dietaryPattern.spoonacularDiet {
             items.append(.init(name: "diet", value: diet))
         }
-        if let cuisine = profile.cuisinePreference.spoonacularCuisine {
+        if includeCuisine, let cuisine = profile.cuisinePreference.spoonacularCuisine {
             items.append(.init(name: "cuisine", value: cuisine))
         }
         if !profile.allergies.isEmpty {
