@@ -27,6 +27,9 @@ struct RootView: View {
         // Settings repaints every surface without any view caching its own copy.
         .environment(\.accent, appState.profile.accentColor)
         .task(id: taskKey) {
+            // The unit-test bundle is hosted in this app, so without this guard
+            // a test run would trigger real permission prompts and network calls.
+            guard !RuntimeEnvironment.isRunningUnitTests else { return }
             guard accountManager.state != .signedOut else { return }
 
             if !appState.onboardingComplete {

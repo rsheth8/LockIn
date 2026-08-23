@@ -19,22 +19,26 @@ enum MealEngine {
 
     // MARK: - Live path
 
-    /// Fetches (or reuses) the week's Spoonacular plan and maps today's meals.
-    /// Returns nil whenever live data isn't usable, which tells the caller to
-    /// fall back rather than surfacing an error to the user.
+    /// Fetches (or reuses) the week's recipe pool and assembles today's meals
+    /// from it. Returns nil whenever live data isn't usable, which tells the
+    /// caller to fall back rather than surfacing an error to the user.
     static func liveMealsForToday(macros: MacroTargets, profile: UserProfile) async -> [Meal]? {
         guard Secrets.hasSpoonacular, !RecipeCache.shared.isQuotaBlocked else { return nil }
 
         let signature = RecipeCache.signature(calories: macros.calories, profile: profile)
-        var plan = RecipeCache.shared.cachedPlan(signature: signature)
+        var pool = RecipeCache.shared.cachedPool(signature: signature)
 
-        if plan == nil {
+        if pool == nil {
             do {
-                let fetched = try await SpoonacularClient.shared.weekMealPlan(
-                    targetCalories: macros.calories, profile: profile
+                // Floor the per-serving protein requirement at the day's
+                // average protein-per-meal so the pool can actually hit target.
+                let perMeal = max(Int(Double(macros.proteinGrams) / Double(max(profile.mealsPerDay, 1)) * 0.7), 15)
+                let fetched = try await SpoonacularClient.shared.recipePool(
+                    profile: profile, minProteinPerServing: perMeal
                 )
-                RecipeCache.shared.store(plan: fetched, signature: signature)
-                plan = fetched
+                guard !fetched.isEmpty else { return nil }
+                RecipeCache.shared.store(pool: fetched, signature: signature)
+                pool = fetched
             } catch SpoonacularClient.ClientError.quotaExceeded {
                 RecipeCache.shared.markQuotaExceeded()
                 return nil
@@ -43,45 +47,89 @@ enum MealEngine {
             }
         }
 
-        guard let dayPlan = plan?.week[weekdayKey(for: Date())], !dayPlan.meals.isEmpty else { return nil }
+        guard let pool, !pool.isEmpty else { return nil }
+        return assemble(from: pool, macros: macros, profile: profile, date: Date())
+    }
 
-        let slots: [MealSlot] = [.breakfast, .lunch, .dinner]
-        return dayPlan.meals.enumerated().map { index, planMeal in
-            let slot = index < slots.count ? slots[index] : .snack
-            // The plan endpoint gives per-day totals, not per-meal macros. Split
-            // the day's nutrients across meals by the configured calorie share
-            // so numbers stay coherent without spending a quota call per recipe.
-            let share = shareForSlot(slot, mealsPerDay: profile.mealsPerDay)
+    /// Picks the best-fitting recipe for each slot and scales servings to hit
+    /// that slot's calorie and protein share.
+    ///
+    /// Deterministic for a given day: the rotation offset comes from the date,
+    /// so the plan doesn't reshuffle every time the view redraws, but does
+    /// vary across the week.
+    static func assemble(from pool: [SpoonacularRecipe], macros: MacroTargets, profile: UserProfile, date: Date) -> [Meal] {
+        let splits = splits(mealsPerDay: profile.mealsPerDay)
+        let dayOffset = Calendar.current.ordinality(of: .day, in: .era, for: date) ?? 0
+        var used = Set<Int>()
+
+        return splits.enumerated().map { index, entry in
+            let (slot, fraction) = entry
+            let targetCalories = Double(macros.calories) * fraction
+            let targetProtein = Double(macros.proteinGrams) * fraction
+
+            let available = pool.filter { !used.contains($0.id) }
+            let searchSpace = available.isEmpty ? pool : available
+
+            // Rank by fit, then rotate *within the shortlist* by day. Rotating
+            // the whole pool before a `min` does nothing — the global best fit
+            // wins regardless of array order, so every day served identical
+            // meals. Choosing among the closest few keeps macros honest while
+            // actually varying the week.
+            let shortlist = searchSpace
+                .filter { $0.macrosPerServing.calories > 0 }
+                .sorted {
+                    fitCost($0, targetCalories: targetCalories, targetProtein: targetProtein)
+                        < fitCost($1, targetCalories: targetCalories, targetProtein: targetProtein)
+                }
+                .prefix(4)
+
+            let best = shortlist.isEmpty
+                ? nil
+                : Array(shortlist)[((dayOffset + index) % shortlist.count + shortlist.count) % shortlist.count]
+
+            guard let recipe = best, recipe.macrosPerServing.calories > 0 else {
+                return buildMeal(slot: slot, calorieShare: targetCalories, profile: profile)
+            }
+            used.insert(recipe.id)
+
+            // Scale servings to close the calorie gap, clamped so the app never
+            // tells you to eat a sixth of a muffin or four whole dinners.
+            let rawServings = targetCalories / recipe.macrosPerServing.calories
+            let servings = min(max(rawServings, 0.5), 3)
+
+            let per = recipe.macrosPerServing
             let component = MealComponent(
                 food: FoodItem(
-                    name: planMeal.title,
-                    per100g: MacroTargetsLite(
-                        calories: dayPlan.nutrients.calories * share,
-                        proteinG: dayPlan.nutrients.protein * share,
-                        fatG: dayPlan.nutrients.fat * share,
-                        carbG: dayPlan.nutrients.carbohydrates * share
-                    ),
-                    prepAheadMinutes: (planMeal.readyInMinutes ?? 0) > 30 ? planMeal.readyInMinutes : nil,
-                    prepInstructions: (planMeal.readyInMinutes ?? 0) > 30
-                        ? "Takes about \(planMeal.readyInMinutes ?? 0) min — start it early or batch it the night before."
+                    name: recipe.title,
+                    // per100g here carries one serving's macros; gramsToWeigh
+                    // is servings×100 so MealComponent's /100 scaling yields
+                    // exactly `servings` portions.
+                    per100g: per,
+                    prepAheadMinutes: recipe.needsPrepAhead ? recipe.readyInMinutes : nil,
+                    prepInstructions: recipe.needsPrepAhead
+                        ? "Takes about \(recipe.readyInMinutes ?? 0) min — start early or batch it the night before."
                         : nil
                 ),
-                gramsToWeigh: 100   // one serving; per100g already carries the serving's macros
+                gramsToWeigh: (servings * 100).rounded()
             )
-            return Meal(slot: slot, name: planMeal.title, components: [component], spoonacularID: planMeal.id)
+            return Meal(slot: slot, name: recipe.title, components: [component], spoonacularID: recipe.id)
         }
     }
 
-    private static func shareForSlot(_ slot: MealSlot, mealsPerDay: Int) -> Double {
-        splits(mealsPerDay: mealsPerDay).first { $0.0 == slot }?.1 ?? 0.25
+    /// Squared relative error on calories and protein, protein weighted double
+    /// because it's the macro that actually drives lean-mass retention and the
+    /// one Spoonacular's own planner gets wrong.
+    static func fitCost(_ recipe: SpoonacularRecipe, targetCalories: Double, targetProtein: Double) -> Double {
+        let macros = recipe.macrosPerServing
+        guard macros.calories > 0 else { return .greatestFiniteMagnitude }
+
+        // Compare at the scaled serving size we'd actually prescribe.
+        let servings = min(max(targetCalories / macros.calories, 0.5), 3)
+        let calorieError = (macros.calories * servings - targetCalories) / max(targetCalories, 1)
+        let proteinError = (macros.proteinG * servings - targetProtein) / max(targetProtein, 1)
+        return calorieError * calorieError + 2 * proteinError * proteinError
     }
 
-    private static func weekdayKey(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        return formatter.string(from: date).lowercased()
-    }
 
     // MARK: - Fallback path
 

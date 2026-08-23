@@ -10,32 +10,38 @@ import Foundation
 final class RecipeCache {
     static let shared = RecipeCache()
 
-    private let defaults = UserDefaults.standard
-    private let planKey = "spoonacular.weekPlan"
-    private let planFetchedKey = "spoonacular.weekPlanFetchedAt"
-    private let planSignatureKey = "spoonacular.weekPlanSignature"
+    private let defaults: UserDefaults
+    private let poolKey = "spoonacular.recipePool"
+    private let poolFetchedKey = "spoonacular.recipePoolFetchedAt"
+    private let poolSignatureKey = "spoonacular.recipePoolSignature"
     private let quotaBlockedKey = "spoonacular.quotaBlockedUntil"
 
-    // MARK: - Week plan
-
-    /// A cached plan is reusable while it's under a week old AND was generated
-    /// for the same targets — changing your calorie goal should invalidate it,
-    /// otherwise you'd keep eating last week's numbers.
-    func cachedPlan(signature: String) -> SpoonacularWeekPlan? {
-        guard let fetched = defaults.object(forKey: planFetchedKey) as? Date,
-              Date().timeIntervalSince(fetched) < 7 * 24 * 3600,
-              defaults.string(forKey: planSignatureKey) == signature,
-              let data = defaults.data(forKey: planKey),
-              let plan = try? JSONDecoder().decode(SpoonacularWeekPlan.self, from: data)
-        else { return nil }
-        return plan
+    /// Injectable so tests can run against an isolated suite instead of the
+    /// real user defaults.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
     }
 
-    func store(plan: SpoonacularWeekPlan, signature: String) {
-        guard let data = try? JSONEncoder().encode(plan) else { return }
-        defaults.set(data, forKey: planKey)
-        defaults.set(Date(), forKey: planFetchedKey)
-        defaults.set(signature, forKey: planSignatureKey)
+    // MARK: - Recipe pool
+
+    /// A cached pool is reusable while it's under a week old AND was fetched
+    /// for the same targets — changing your calorie goal or diet should
+    /// invalidate it, otherwise you'd keep eating last week's numbers.
+    func cachedPool(signature: String) -> [SpoonacularRecipe]? {
+        guard let fetched = defaults.object(forKey: poolFetchedKey) as? Date,
+              Date().timeIntervalSince(fetched) < 7 * 24 * 3600,
+              defaults.string(forKey: poolSignatureKey) == signature,
+              let data = defaults.data(forKey: poolKey),
+              let pool = try? JSONDecoder().decode([SpoonacularRecipe].self, from: data)
+        else { return nil }
+        return pool
+    }
+
+    func store(pool: [SpoonacularRecipe], signature: String) {
+        guard let data = try? JSONEncoder().encode(pool) else { return }
+        defaults.set(data, forKey: poolKey)
+        defaults.set(Date(), forKey: poolFetchedKey)
+        defaults.set(signature, forKey: poolSignatureKey)
     }
 
     /// Identifies what a cached plan was generated for.
@@ -57,7 +63,7 @@ final class RecipeCache {
     }
 
     func clear() {
-        [planKey, planFetchedKey, planSignatureKey, quotaBlockedKey].forEach {
+        [poolKey, poolFetchedKey, poolSignatureKey, quotaBlockedKey].forEach {
             defaults.removeObject(forKey: $0)
         }
     }

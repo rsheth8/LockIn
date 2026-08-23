@@ -105,6 +105,20 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+  LockInTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: LockIn
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rahilsheth.lockin.tests
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        GENERATE_INFOPLIST_FILE: true
+
 schemes:
   LockIn:
     build:
@@ -113,3 +127,8 @@ schemes:
         LockInMonitor: all
     run:
       config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - LockInTests
