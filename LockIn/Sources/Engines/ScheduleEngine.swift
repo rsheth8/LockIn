@@ -45,9 +45,13 @@ enum ScheduleEngine {
         }
 
         // Workout: find the largest free gap between 2pm-9pm that fits 60 min, avoiding busy blocks.
+        // Session content rotates through WorkoutEngine's split based on active FitnessGoals
+        // (fat loss + fast bowling + hiking/backpacking all pull from the same weekly plan).
         if let workoutTime = findWorkoutSlot(busyBlocks: busyBlocks, date: date) {
-            let equipmentNote = profile.equipment.contains(.fullGym) ? "Gym session — follow this week's program." : "Home session — dumbbells/bodyweight circuit."
-            events.append(ScheduledEvent(kind: .workout, title: "Workout", detail: equipmentNote, time: workoutTime, durationMinutes: 60, isCritical: true))
+            let session = WorkoutEngine.session(for: date, goals: profile.fitnessGoals)
+            let goalTagLine = session.goalTags.filter { profile.fitnessGoals.contains($0) }.map { $0.displayName }.joined(separator: " · ")
+            let detail = "\(session.summaryLine)\n\(session.equipmentNote)\nServes: \(goalTagLine)"
+            events.append(ScheduledEvent(kind: .workout, title: session.focus.title, detail: detail, time: workoutTime, durationMinutes: 60, isCritical: true))
         }
 
         events.append(ScheduledEvent(kind: .windDown, title: "Wind down", detail: "Screens off, lights dim. This is non-negotiable for sleep quality.", time: sleepPlan.windDownStart, durationMinutes: 45, isCritical: true))

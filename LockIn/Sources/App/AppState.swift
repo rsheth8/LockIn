@@ -14,6 +14,7 @@ final class AppState: ObservableObject {
     init() {
         self.profile = store.loadProfile() ?? UserProfile.default
         self.onboardingComplete = store.loadProfile() != nil
+        self.streak = store.loadStreak() ?? StreakStatus()
     }
 
     /// Regenerates today's plan from calendar + profile. Call on launch,
@@ -36,5 +37,57 @@ final class AppState: ObservableObject {
         self.profile = profile
         store.saveProfile(profile)
         onboardingComplete = true
+    }
+
+    // MARK: - Check-ins
+
+    /// User tapped "Done" on an event. Updates status, and — for critical events —
+    /// rolls the daily streak forward once every critical event for today is confirmed.
+    func confirm(_ event: ScheduledEvent) {
+        setStatus(.confirmed, for: event)
+    }
+
+    /// User tapped "Missed" (or an escalation window closed with no confirmation).
+    func markMissed(_ event: ScheduledEvent) {
+        setStatus(.missed, for: event)
+        if event.isCritical {
+            streak.currentStreakDays = 0
+            streak.lastMissedEvent = event.title
+            streak.missedCheckInsThisWeek += 1
+            store.saveStreak(streak)
+        }
+    }
+
+    private func setStatus(_ status: EventStatus, for event: ScheduledEvent) {
+        guard var schedule = todaySchedule,
+              let index = schedule.events.firstIndex(where: { $0.id == event.id }) else { return }
+        schedule.events[index].status = status
+        todaySchedule = schedule
+        store.saveSchedule(schedule)
+        evaluateStreak(schedule: schedule)
+    }
+
+    /// A day counts toward the streak once every critical event in it is confirmed
+    /// (not missed). Called after each confirmation so the streak ticks the moment
+    /// the last critical box is checked, not just at midnight rollover.
+    private func evaluateStreak(schedule: DaySchedule) {
+        let criticalEvents = schedule.events.filter { $0.isCritical }
+        let allConfirmed = !criticalEvents.isEmpty && criticalEvents.allSatisfy { $0.status == .confirmed }
+        let anyMissed = criticalEvents.contains { $0.status == .missed }
+
+        guard allConfirmed, !anyMissed else { return }
+        let key = dayKey(schedule.date)
+        guard streak.lastCountedDayKey != key else { return }
+
+        streak.currentStreakDays += 1
+        streak.longestStreakDays = max(streak.longestStreakDays, streak.currentStreakDays)
+        streak.lastCountedDayKey = key
+        store.saveStreak(streak)
+    }
+
+    private func dayKey(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: date)
     }
 }

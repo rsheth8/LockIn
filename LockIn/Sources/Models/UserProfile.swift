@@ -30,6 +30,7 @@ struct UserProfile: Codable, Equatable {
     var activityLevel: ActivityLevel
     var equipment: [Equipment]
     var hasAppleWatch: Bool
+    var fitnessGoals: Set<FitnessGoal>
     var dietaryPattern: DietaryPattern
     var southAsianVegetarian: Bool  // biases meal DB toward dal/paneer/roti/sabzi style meals
     var wakeConstraintEarliest: DateComponents?   // e.g. can't wake before class needs, optional
@@ -47,6 +48,7 @@ struct UserProfile: Codable, Equatable {
         activityLevel: .lightlyActive,
         equipment: [.fullGym, .homeEquipment],
         hasAppleWatch: true,
+        fitnessGoals: [.fatLoss, .fastBowling, .hikingBackpacking],
         dietaryPattern: .vegetarian,
         southAsianVegetarian: true,
         wakeConstraintEarliest: nil,
@@ -72,4 +74,7 @@ struct StreakStatus: Codable, Equatable {
     var longestStreakDays: Int = 0
     var lastMissedEvent: String?
     var missedCheckInsThisWeek: Int = 0
+    /// "yyyy-MM-dd" of the last day already counted toward currentStreakDays,
+    /// so evaluateStreak doesn't double-increment on repeat confirmations.
+    var lastCountedDayKey: String?
 }

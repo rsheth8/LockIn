@@ -14,11 +14,12 @@ struct OnboardingFlowView: View {
                 switch step {
                 case 0: basicsStep
                 case 1: goalStep
-                default: activityStep
+                case 2: activityStep
+                default: fitnessGoalStep
                 }
                 Spacer()
-                Button(step < 2 ? "Continue" : "Lock In") {
-                    if step < 2 { step += 1 } else { finish() }
+                Button(step < 3 ? "Continue" : "Lock In") {
+                    if step < 3 { step += 1 } else { finish() }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -62,7 +63,27 @@ struct OnboardingFlowView: View {
         }
     }
 
+    private var fitnessGoalStep: some View {
+        Form {
+            Section(content: {
+                ForEach(FitnessGoal.allCases.filter { $0 != .fatLoss }) { goal in
+                    Toggle(goal.displayName, isOn: Binding(
+                        get: { profile.fitnessGoals.contains(goal) },
+                        set: { isOn in
+                            if isOn { profile.fitnessGoals.insert(goal) } else { profile.fitnessGoals.remove(goal) }
+                        }
+                    ))
+                }
+            }, header: {
+                Text("Train for")
+            }, footer: {
+                Text("Fat loss is always included. Your workout split adds bowling- or hiking-specific sessions on top based on what you pick here.")
+            })
+        }
+    }
+
     private func finish() {
+        profile.fitnessGoals.insert(.fatLoss)
         appState.saveProfile(profile)
         Task {
             _ = await NotificationManager.shared.requestAuthorization()
