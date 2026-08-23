@@ -83,6 +83,30 @@ cp LockIn/Sources/Resources/Secrets.example.plist LockIn/Sources/Resources/Secre
 
 Re-run `xcodegen generate` after editing `project.yml`.
 
+## Tests
+
+```bash
+cd LockIn && xcodebuild -project LockIn.xcodeproj -scheme LockIn \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+128 tests covering the metabolic engine (BMR pinned to hand-computed
+Mifflin-St Jeor values, safety floors swept across ~300 body/sex combinations,
+macros proven never negative), meal assembly and macro fitting, sleep and
+schedule construction, streak/adherence logic, accountability copy, cache
+invalidation, and Spoonacular decoding + the filter-relaxation ladder against
+a mocked `URLProtocol` (no network, no quota).
+
+Two things worth knowing if you add tests:
+
+- The test bundle is **hosted in the app**, so anything the app does at launch
+  runs during a test pass. `RuntimeEnvironment.isRunningUnitTests` keeps
+  startup and UI inert — without it, `RootView` requests Calendar/Health
+  permissions and the suite hangs on a system dialog forever.
+- Settings has a DEBUG-only "Seed history" button that generates ~4 months of
+  realistic adherence data, for reviewing the grid and charts against
+  something other than an empty state.
+
 ## Project structure note
 
 `LockInMonitor` (`LockIn/MonitorExtension/`) is a separate app-extension
