@@ -18,22 +18,31 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(GOOGLE_REVERSED_CLIENT_ID)</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>LockIn reads your calendar to schedule meals and workouts around class/work without conflicts.</string>
+	<string>Lock In reads your calendar to schedule meals and workouts around class/work without conflicts.</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>LockIn reads your calendar to schedule meals and workouts around class/work without conflicts.</string>
+	<string>Lock In reads your calendar to schedule meals and workouts around class/work without conflicts.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>LockIn takes a daily progress photo, stored only on this device, so you can see your physical changes over time.</string>
+	<string>Lock In takes a daily progress photo, stored only on this device, so you can see your physical changes over time.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Used to quickly confirm check-ins.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>LockIn reads your weight, workouts, and sleep from Health to track progress toward your goal.</string>
+	<string>Lock In reads your weight, workouts, and sleep from Health to track progress toward your goal.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>LockIn logs workouts and weight to Health so everything stays in sync.</string>
+	<string>Lock In logs workouts and weight to Health so everything stays in sync.</string>
 	<key>NSUserNotificationsUsageDescription</key>
-	<string>LockIn sends reminders and accountability check-ins to keep you on schedule.</string>
+	<string>Lock In sends reminders and accountability check-ins to keep you on schedule.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

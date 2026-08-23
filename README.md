@@ -65,6 +65,24 @@ your Apple Developer Team ID and re-run `xcodegen generate`.
   compare), and Settings (Screen Time + tone) tabs.
 - Check-in confirmation (swipe to confirm/miss on Today), streak tracking.
 
+## Setup: API keys
+
+Copy the example secrets file and fill in your keys — `Secrets.plist` is
+gitignored and never committed:
+
+```bash
+cp LockIn/Sources/Resources/Secrets.example.plist LockIn/Sources/Resources/Secrets.plist
+```
+
+- **Spoonacular** (`SpoonacularAPIKey`) — real recipes and macros. Without it
+  the app runs entirely on the built-in food database; nothing breaks.
+- **Google** (`GoogleClientID`) — enables the Google sign-in button. Also paste
+  your `REVERSED_CLIENT_ID` into `GOOGLE_REVERSED_CLIENT_ID` in `project.yml`
+  so the OAuth redirect resolves. Without it the button stays hidden and Apple
+  sign-in still works.
+
+Re-run `xcodegen generate` after editing `project.yml`.
+
 ## Project structure note
 
 `LockInMonitor` (`LockIn/MonitorExtension/`) is a separate app-extension

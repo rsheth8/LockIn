@@ -235,6 +235,28 @@ final class AppState: ObservableObject {
         store.saveStreak(streak)
     }
 
+#if DEBUG
+    /// Loads generated history so the record surfaces can be reviewed with
+    /// realistic data. Triggered from the DEBUG-only row in Settings.
+    func loadDemoHistory() {
+        let seeded = DebugSeed.dayRecords()
+        dayRecords = seeded
+        profile.weightHistory = DebugSeed.weightHistory(from: seeded)
+        if let latest = profile.weightHistory.last {
+            profile.currentWeightLbs = latest.weightLbs
+        }
+        store.saveDayRecords(seeded)
+        store.saveProfile(profile)
+    }
+
+    func clearDemoHistory() {
+        dayRecords = []
+        profile.weightHistory = []
+        store.saveDayRecords([])
+        store.saveProfile(profile)
+    }
+#endif
+
     private func dayKey(_ date: Date) -> String {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"

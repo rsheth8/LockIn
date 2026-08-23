@@ -23,6 +23,9 @@ struct SettingsView: View {
                     screenTimeSection
                     goalsSection
                     accountSection
+#if DEBUG
+                    debugSection
+#endif
                 }
                 .padding(.horizontal, Theme.gutter)
                 .padding(.top, 8)
@@ -241,6 +244,28 @@ struct SettingsView: View {
             }
         }
     }
+
+#if DEBUG
+    /// Development only — stripped from release builds.
+    private var debugSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Debug").ledgerLabel()
+            HStack(spacing: 10) {
+                Button("Seed history") {
+                    Haptics.tap()
+                    withAnimation(.snappy) { appState.loadDemoHistory() }
+                }
+                Button("Clear") {
+                    Haptics.tap()
+                    withAnimation(.snappy) { appState.clearDemoHistory() }
+                }
+            }
+            .font(.system(size: 13, weight: .medium))
+            .buttonStyle(.bordered)
+            .tint(Theme.inkMuted)
+        }
+    }
+#endif
 
     private func row(_ label: String, _ value: String) -> some View {
         HStack {

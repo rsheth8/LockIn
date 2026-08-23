@@ -7,6 +7,7 @@ import SwiftUI
 /// nobody should be handed a calorie number without seeing how it was derived.
 struct QuizFlowView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var accountManager: AccountManager
     @Environment(\.accent) private var accent
 
     @State private var profile = UserProfile.blank
@@ -61,6 +62,13 @@ struct QuizFlowView: View {
             }
             .padding(.horizontal, Theme.gutter)
             .padding(.bottom, 24)
+        }
+        .onAppear {
+            // Prefill from whatever the sign-in provider gave us, so the name
+            // step is already answered for most people.
+            if profile.name.isEmpty, let name = accountManager.displayName {
+                profile.name = name
+            }
         }
     }
 

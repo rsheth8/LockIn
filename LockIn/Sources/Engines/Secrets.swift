@@ -28,4 +28,14 @@ enum Secrets {
     /// entirely on the built-in food database — no degraded behaviour, just
     /// fewer recipes.
     static var hasSpoonacular: Bool { spoonacularKey != nil }
+
+    /// OAuth client ID from the Google Cloud console. Absent means the Google
+    /// sign-in button stays hidden rather than failing when tapped.
+    static var googleClientID: String? {
+        guard let key = values["GoogleClientID"] as? String,
+              !key.isEmpty,
+              key != "PASTE_YOUR_GOOGLE_CLIENT_ID_HERE"
+        else { return nil }
+        return key
+    }
 }

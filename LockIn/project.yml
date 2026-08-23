@@ -4,6 +4,10 @@ options:
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
+packages:
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: 7.1.0
 settings:
   DEVELOPMENT_TEAM: "" # fill in your Apple Developer Team ID
 targets:
@@ -19,6 +23,10 @@ targets:
     dependencies:
       - target: LockInMonitor
         embed: true
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: GoogleSignIn
+        product: GoogleSignInSwift
     info:
       path: Sources/Resources/Info.plist
       properties:
@@ -37,6 +45,12 @@ targets:
         UIBackgroundModes:
           - fetch
           - processing
+        # Google Sign-In returns to the app through this URL scheme. Replace the
+        # placeholder with your REVERSED_CLIENT_ID from the Google Cloud
+        # console (it looks like com.googleusercontent.apps.1234-abcd).
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - $(GOOGLE_REVERSED_CLIENT_ID)
     entitlements:
       path: Sources/Resources/LockIn.entitlements
       properties:
@@ -57,6 +71,10 @@ targets:
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         ENABLE_PREVIEWS: true
+        # Overridden in Local.xcconfig (gitignored) with your real reversed
+        # client ID. The placeholder lets the project build without it — Google
+        # sign-in simply stays hidden until it's configured.
+        GOOGLE_REVERSED_CLIENT_ID: com.googleusercontent.apps.PLACEHOLDER
 
   LockInMonitor:
     type: app-extension

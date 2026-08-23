@@ -75,18 +75,7 @@ struct ProgressGalleryView: View {
     // MARK: - Promise grid
 
     private var promiseSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Promises", trailing: cleanDaysSummary)
-            PromiseGrid(records: appState.dayRecords, keptColor: accent.color)
-            PromiseGridLegend(keptColor: accent.color)
-        }
-    }
-
-    private var cleanDaysSummary: String {
-        let clean = appState.dayRecords.filter { $0.isClean }.count
-        let tracked = appState.dayRecords.filter { $0.criticalTotal > 0 }.count
-        guard tracked > 0 else { return "—" }
-        return "\(clean)/\(tracked) clean"
+        PromiseGridSection(records: appState.dayRecords, accent: accent)
     }
 
     // MARK: - Weight trend
@@ -102,11 +91,12 @@ struct ProgressGalleryView: View {
                     ForEach(appState.profile.weightHistory, id: \.date) { entry in
                         LineMark(x: .value("Date", entry.date), y: .value("Weight", entry.weightLbs))
                             .interpolationMethod(.catmullRom)
-                            .foregroundStyle(Theme.ink)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                            .foregroundStyle(accent.color)
                         AreaMark(x: .value("Date", entry.date), y: .value("Weight", entry.weightLbs))
                             .interpolationMethod(.catmullRom)
                             .foregroundStyle(.linearGradient(
-                                colors: [Theme.ink.opacity(0.14), Theme.ink.opacity(0)],
+                                colors: [accent.color.opacity(0.16), accent.color.opacity(0)],
                                 startPoint: .top, endPoint: .bottom
                             ))
                     }
@@ -119,14 +109,18 @@ struct ProgressGalleryView: View {
                                 .foregroundStyle(Theme.signal)
                         }
                 }
+                // Scale to the data, never from zero. A weight axis anchored at
+                // 0 squashes a real 15 lb change into a flat line at the top of
+                // the chart and hides the only thing the chart exists to show.
+                .chartYScale(domain: weightDomain)
                 .chartYAxis {
-                    AxisMarks(position: .leading) { _ in
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
                         AxisValueLabel().font(Theme.mono(9)).foregroundStyle(Theme.inkMuted)
                         AxisGridLine().foregroundStyle(Theme.rule)
                     }
                 }
                 .chartXAxis {
-                    AxisMarks { _ in
+                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                         AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                             .font(Theme.mono(9)).foregroundStyle(Theme.inkMuted)
                     }
@@ -134,6 +128,18 @@ struct ProgressGalleryView: View {
                 .frame(height: 170)
             }
         }
+    }
+
+    /// Y range covering the weigh-ins plus the goal line, with a little padding
+    /// so the trend line never touches the frame edges.
+    private var weightDomain: ClosedRange<Double> {
+        let weights = appState.profile.weightHistory.map(\.weightLbs)
+        guard let low = weights.min(), let high = weights.max() else {
+            return (appState.profile.currentWeightLbs - 10)...(appState.profile.currentWeightLbs + 10)
+        }
+        let goal = appState.profile.goalWeightLbs
+        let padding = max((high - low) * 0.18, 3)
+        return (min(low, goal) - padding)...(max(high, goal) + padding)
     }
 
     /// Shows the delta once there's actually a delta to show — a lone weigh-in
