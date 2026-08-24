@@ -6,6 +6,7 @@ import SwiftUI
 /// instrument panel rather than a to-do list.
 struct TodayView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var calendarManager: CalendarManager
     @Environment(\.accent) private var accent
     var onOpenProgressPhoto: () -> Void
 
@@ -137,7 +138,18 @@ struct TodayView: View {
 
     private func timeline(schedule: DaySchedule) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("The Day").ledgerLabel().padding(.bottom, 10)
+            HStack(alignment: .firstTextBaseline) {
+                Text("The Day").ledgerLabel()
+                Spacer()
+                if schedule.events.contains(where: { $0.kind == .commitment || $0.kind == .task }) {
+                    Text("Live")
+                        .font(Theme.mono(11, weight: .semibold))
+                        .tracking(Theme.labelTracking)
+                        .textCase(.uppercase)
+                        .foregroundStyle(accent.color)
+                }
+            }
+            .padding(.bottom, 10)
             ForEach(schedule.events) { event in
                 TimelineRow(
                     event: event,
@@ -160,6 +172,9 @@ struct TodayView: View {
     private func confirm(_ event: ScheduledEvent) {
         let before = appState.streak.currentStreakDays
         withAnimation(.snappy) { appState.confirm(event) }
+        if event.kind == .task, let id = event.externalIdentifier {
+            calendarManager.completeReminder(identifier: id)
+        }
         appState.streak.currentStreakDays > before ? Haptics.milestone() : Haptics.confirm()
     }
 
@@ -290,9 +305,8 @@ private struct TimelineRow: View {
             }
             Spacer(minLength: 0)
 
-            // Pending rows carry their own confirm affordance so you can clear
-            // anything from the timeline without scrolling back to the hero card.
-            if event.status == .pending || event.status == .snoozed {
+            // Calendar commitments are context, not promises — no check-in.
+            if event.kind != .commitment, event.status == .pending || event.status == .snoozed {
                 Button(action: onConfirm) {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .bold))

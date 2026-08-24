@@ -30,9 +30,9 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Lock In reads your calendar to schedule meals and workouts around class/work without conflicts.</string>
+	<string>Lock In reads your calendar to build today's timeline around class and work, and writes your Lock In plan onto a dedicated calendar so it shows up in Calendar and on Apple Watch.</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>Lock In reads your calendar to schedule meals and workouts around class/work without conflicts.</string>
+	<string>Lock In reads your calendar to build today's timeline around class and work, and writes your Lock In plan onto a dedicated calendar so it shows up in Calendar and on Apple Watch.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Lock In takes a daily progress photo, stored only on this device, so you can see your physical changes over time.</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -41,6 +41,10 @@
 	<string>Lock In reads your weight, workouts, and sleep from Health to track progress toward your goal.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Lock In logs workouts and weight to Health so everything stays in sync.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Lock In pulls today's reminders onto your day so tasks sit next to meals and training. Marking one done in Lock In completes it in Reminders.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Lock In pulls today's reminders onto your day so tasks sit next to meals and training.</string>
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>Lock In sends reminders and accountability check-ins to keep you on schedule.</string>
 	<key>UIBackgroundModes</key>

@@ -53,8 +53,11 @@ final class AppState: ObservableObject {
     /// the card never goes blank mid-evening.
     var currentEvent: ScheduledEvent? {
         guard let events = todaySchedule?.events else { return nil }
-        let pending = events.filter { $0.status == .pending || $0.status == .snoozed }
+        let pending = events.filter {
+            ($0.status == .pending || $0.status == .snoozed) && $0.kind.canLeadHero
+        }
         return pending.min(by: { abs($0.time.timeIntervalSinceNow) < abs($1.time.timeIntervalSinceNow) })
+            ?? events.last(where: { $0.kind.canLeadHero })
             ?? events.last
     }
 
@@ -99,7 +102,7 @@ final class AppState: ObservableObject {
     /// every confirmation made earlier in the day on the next app launch, which
     /// silently destroys the streak. Statuses are carried across by matching
     /// kind + title, which is stable for a given day's plan.
-    func regenerateToday(calendarBusyBlocks: [BusyBlock], liveMeals: [Meal]? = nil) {
+    func regenerateToday(calendarBusyBlocks: [BusyBlock], tasks: [DayTask] = [], liveMeals: [Meal]? = nil) {
         let macros = MetabolicEngine.dailyTargets(for: profile)
         let sleep = SleepEngine.plan(for: profile, busyBlocks: calendarBusyBlocks)
         var schedule = ScheduleEngine.buildDay(
@@ -108,13 +111,14 @@ final class AppState: ObservableObject {
             sleepPlan: sleep,
             busyBlocks: calendarBusyBlocks,
             date: Date(),
-            liveMeals: liveMeals
+            liveMeals: liveMeals,
+            tasks: tasks
         )
 
         if let saved = store.loadSchedule(), Calendar.current.isDateInToday(saved.date) {
             for index in schedule.events.indices {
                 let event = schedule.events[index]
-                if let previous = saved.events.first(where: { $0.kind == event.kind && $0.title == event.title }) {
+                if let previous = saved.events.first(where: { Self.sameEvent($0, event) }) {
                     schedule.events[index].status = previous.status
                 }
             }
@@ -125,9 +129,19 @@ final class AppState: ObservableObject {
         recordToday(schedule: schedule)
     }
 
+    /// Calendar items match by EventKit id so a renamed lecture still keeps
+    /// its row; Lock In items still match on kind + title so a meal rebuild
+    /// doesn't wipe a check-in.
+    private static func sameEvent(_ lhs: ScheduledEvent, _ rhs: ScheduledEvent) -> Bool {
+        if let id = lhs.externalIdentifier, id == rhs.externalIdentifier { return true }
+        return lhs.kind == rhs.kind && lhs.title == rhs.title
+    }
+
     func saveProfile(_ profile: UserProfile) {
-        self.profile = profile
-        store.saveProfile(profile)
+        var synced = profile
+        synced.syncLegacyFoodFields()
+        self.profile = synced
+        store.saveProfile(synced)
         onboardingComplete = true
         syncToneToMonitorExtension()
         pushToCloud()

@@ -14,6 +14,8 @@ final class NotificationManager {
     func scheduleDay(_ schedule: DaySchedule, tone: ToneIntensity, streak: StreakStatus) {
         center.removeAllPendingNotificationRequests()
         for event in schedule.events {
+            // Calendar.app already notifies for commitments; don't double-ping.
+            guard event.kind != .commitment else { continue }
             scheduleReminder(for: event)
             if event.isCritical {
                 scheduleEscalations(for: event, tone: tone, streak: streak)

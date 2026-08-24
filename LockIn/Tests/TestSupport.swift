@@ -15,9 +15,11 @@ enum Fixture {
         p.currentWeightLbs = 220
         p.goalWeightLbs = 180
         p.goalDirection = .cut
+        p.deficitIntensity = .standard
         p.activityLevel = .lightlyActive
         p.dietaryPattern = .vegetarian
         p.cuisinePreference = .southAsian
+        p.foodPreferences.cuisines = [.southAsian]
         p.fitnessGoals = [.fatLoss, .fastBowling, .hikingBackpacking]
         p.mealsPerDay = 4
         return p

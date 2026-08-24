@@ -39,8 +39,40 @@ final class ProfileCodingTests: XCTestCase {
         XCTAssertEqual(preset.goalWeightLbs, 180)
         XCTAssertEqual(preset.heightInches, 70)
         XCTAssertEqual(preset.dietaryPattern, .vegetarian)
+        XCTAssertEqual(preset.deficitIntensity, .maximum)
+        XCTAssertTrue(preset.foodPreferences.cuisines.contains(.southAsian))
+        XCTAssertFalse(preset.foodPreferences.favouriteIngredients.isEmpty)
+        XCTAssertFalse(preset.foodPreferences.pantry.isEmpty)
         XCTAssertTrue(preset.fitnessGoals.contains(.fastBowling))
         XCTAssertTrue(preset.fitnessGoals.contains(.hikingBackpacking))
+    }
+
+    func testOldProfilesDecodeWithoutTheNewFoodFields() throws {
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Fixture.rahil)) as! [String: Any]
+        object.removeValue(forKey: "deficitIntensity")
+        object.removeValue(forKey: "foodPreferences")
+        let restored = try JSONDecoder().decode(UserProfile.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(restored.deficitIntensity, .aggressive)
+        XCTAssertEqual(restored.foodPreferences.cuisines, [.southAsian],
+                       "Cuisine preference must migrate into the multi-select")
+    }
+
+    func testFoodPreferencesRoundTrip() throws {
+        var profile = Fixture.rahil
+        profile.deficitIntensity = .maximum
+        profile.foodPreferences = FoodPreferences(
+            cuisines: [.southAsian, .mediterranean],
+            favouriteIngredients: ["paneer", "yogurt"],
+            dislikedIngredients: ["mushroom"],
+            intolerances: ["peanut"],
+            pantry: [PantryItem(name: "spinach")]
+        )
+        let restored = try JSONDecoder().decode(UserProfile.self, from: JSONEncoder().encode(profile))
+        XCTAssertEqual(restored.deficitIntensity, .maximum)
+        XCTAssertEqual(restored.foodPreferences.cuisines, [.southAsian, .mediterranean])
+        XCTAssertEqual(restored.foodPreferences.favouriteIngredients, ["paneer", "yogurt"])
+        XCTAssertEqual(restored.foodPreferences.dislikedIngredients, ["mushroom"])
+        XCTAssertEqual(restored.foodPreferences.pantry.map(\.name), ["spinach"])
     }
 
     func testEachProfileGetsAUniqueIdentity() {

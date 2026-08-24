@@ -176,6 +176,14 @@ final class RecipeCacheTests: XCTestCase {
                           RecipeCache.signature(calories: 2000, profile: withAllergy))
     }
 
+    func testSignatureIncludesPantryAndFavourites() {
+        var withPantry = Fixture.rahil
+        withPantry.foodPreferences.favouriteIngredients = ["paneer"]
+        withPantry.foodPreferences.pantry = [PantryItem(name: "spinach")]
+        XCTAssertNotEqual(RecipeCache.signature(calories: 2000, profile: Fixture.rahil),
+                          RecipeCache.signature(calories: 2000, profile: withPantry))
+    }
+
     func testSignatureIsStableForIdenticalInputs() {
         XCTAssertEqual(RecipeCache.signature(calories: 2000, profile: Fixture.rahil),
                        RecipeCache.signature(calories: 2000, profile: Fixture.rahil))

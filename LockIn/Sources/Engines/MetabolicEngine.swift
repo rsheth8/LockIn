@@ -41,21 +41,55 @@ enum MetabolicEngine {
         bmr(for: profile) * profile.activityLevel.multiplier
     }
 
+    /// Daily calorie gap implied by a target rate of change, using
+    /// ~3500 kcal ≈ 1 lb of fat.
+    static func dailyGapForRate(percentPerWeek: Double, bodyweightLbs: Double) -> Double {
+        let poundsPerWeek = bodyweightLbs * (percentPerWeek / 100)
+        return (poundsPerWeek * 3500) / 7
+    }
+
     static func dailyTargets(for profile: UserProfile) -> MacroTargets {
         let maintenance = tdee(for: profile)
         let direction = profile.goalDirection
+        let intensity = profile.deficitIntensity
 
-        let unclamped = maintenance * (1 + direction.calorieAdjustment)
+        // Cuts and gains are driven by the chosen rate; maintain and recomp sit
+        // at maintenance by definition.
+        let unclamped: Double
+        switch direction {
+        case .cut:
+            unclamped = maintenance - dailyGapForRate(percentPerWeek: intensity.weeklyRatePercent,
+                                                      bodyweightLbs: profile.currentWeightLbs)
+        case .gain:
+            // Lean gain caps out well below fat-loss rates — a surplus beyond
+            // roughly 0.25 %BW/week mostly adds fat. Map the same four paces
+            // proportionally onto that much narrower band (rather than
+            // clamping the fat-loss rate directly, which would collapse every
+            // intensity above steady to the same identical surplus).
+            let gainCeiling = 0.25
+            let gainRate = intensity.weeklyRatePercent / DeficitIntensity.maximum.weeklyRatePercent * gainCeiling
+            unclamped = maintenance + dailyGapForRate(percentPerWeek: gainRate,
+                                                      bodyweightLbs: profile.currentWeightLbs)
+        case .maintain, .recomp:
+            unclamped = maintenance
+        }
+
         let floor = calorieFloor(for: profile.sex)
         let targetCalories = max(unclamped, floor)
         let wasClamped = unclamped < floor
 
         // Protein reference: the bodyweight you're building toward, not the one
         // you're carrying. For a cut this approximates lean mass; for a gain it
-        // scales with the target. Recomp gets the highest allocation since
-        // protein is the whole mechanism there.
+        // scales with the target. Allocation rises with the size of the deficit,
+        // since protein is what protects lean mass when the gap widens.
         let proteinReference = direction == .maintain ? profile.currentWeightLbs : profile.goalWeightLbs
-        let proteinPerLb: Double = direction == .recomp ? 1.1 : 1.0
+        let proteinPerLb: Double = {
+            switch direction {
+            case .recomp: return 1.1
+            case .cut: return intensity.proteinPerLbOfGoalWeight
+            case .maintain, .gain: return 1.0
+            }
+        }()
         let proteinG = proteinReference * proteinPerLb
         let proteinCals = proteinG * 4
 
@@ -75,7 +109,7 @@ enum MetabolicEngine {
             fatGrams: Int(fatG.rounded()),
             carbGrams: Int(carbG.rounded()),
             tdeeMaintenance: Int(maintenance.rounded()),
-            deficitPercent: abs(direction.calorieAdjustment),
+            deficitPercent: maintenance > 0 ? abs(maintenance - targetCalories) / maintenance : 0,
             direction: direction,
             hitSafetyFloor: wasClamped
         )
@@ -114,7 +148,23 @@ enum MetabolicEngine {
 
         let rate = weeklyRatePercent(profile: profile, targets: targets)
         if profile.goalDirection == .cut && rate > 1.0 {
-            notes.append("That's about \(String(format: "%.1f", rate))% of bodyweight per week. Above 1%/week tends to cost you muscle as well as fat — consider a smaller gap or a longer timeline.")
+            notes.append("That's about \(String(format: "%.1f", rate))% of bodyweight per week — past the 0.5–1% band the research supports. Expect more of the loss to come from muscle, and expect hard sessions to feel worse. Sustainable for a block, not for months.")
+        }
+
+        // Eating below BMR for an extended period is a separate concern from
+        // the absolute floor — you can clear 1500 kcal and still be under your
+        // own resting requirement.
+        let bmrValue = bmr(for: profile)
+        if profile.goalDirection == .cut && Double(targets.calories) < bmrValue {
+            notes.append("This target is below your estimated resting burn of \(Int(bmrValue)) kcal. That's workable short-term but not something to hold for months — plan a break at maintenance every 6–8 weeks.")
+        }
+
+        // A very low carb allocation is the practical failure mode for a fast
+        // bowler: sprint and power work is glycolytic and degrades first.
+        if profile.goalDirection == .cut,
+           profile.fitnessGoals.contains(.fastBowling) || profile.fitnessGoals.contains(.hikingBackpacking),
+           targets.carbGrams < 100 {
+            notes.append("Only \(targets.carbGrams)g of carbs left after protein and fat. Sprint work, bowling spells and long carries all run on glycogen — put most of these carbs around training or expect sessions to fall apart.")
         }
 
         if profile.goalDirection == .cut && profile.goalWeightLbs >= profile.currentWeightLbs {

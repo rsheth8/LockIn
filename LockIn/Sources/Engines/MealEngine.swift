@@ -101,8 +101,8 @@ enum MealEngine {
             let shortlist = searchSpace
                 .filter { $0.macrosPerServing.calories > 0 }
                 .sorted {
-                    fitCost($0, targetCalories: targetCalories, targetProtein: targetProtein)
-                        < fitCost($1, targetCalories: targetCalories, targetProtein: targetProtein)
+                    fitCost($0, targetCalories: targetCalories, targetProtein: targetProtein, profile: profile)
+                        < fitCost($1, targetCalories: targetCalories, targetProtein: targetProtein, profile: profile)
                 }
                 .prefix(4)
 
@@ -142,7 +142,8 @@ enum MealEngine {
     /// Squared relative error on calories and protein, protein weighted double
     /// because it's the macro that actually drives lean-mass retention and the
     /// one Spoonacular's own planner gets wrong.
-    static func fitCost(_ recipe: SpoonacularRecipe, targetCalories: Double, targetProtein: Double) -> Double {
+    static func fitCost(_ recipe: SpoonacularRecipe, targetCalories: Double, targetProtein: Double,
+                        profile: UserProfile? = nil) -> Double {
         let macros = recipe.macrosPerServing
         guard macros.calories > 0 else { return .greatestFiniteMagnitude }
 
@@ -150,7 +151,36 @@ enum MealEngine {
         let servings = min(max(targetCalories / macros.calories, 0.5), 3)
         let calorieError = (macros.calories * servings - targetCalories) / max(targetCalories, 1)
         let proteinError = (macros.proteinG * servings - targetProtein) / max(targetProtein, 1)
-        return calorieError * calorieError + 2 * proteinError * proteinError
+        var cost = calorieError * calorieError + 2 * proteinError * proteinError
+        if let profile {
+            cost += preferencePenalty(title: recipe.title, profile: profile)
+        }
+        return cost
+    }
+
+    /// Soft ranking on top of macros: favourites and pantry items in the title
+    /// pull a recipe forward, disliked ingredients push it back. Dislikes are
+    /// also sent as `excludeIngredients`, so this is a second line of defence
+    /// for the local pool and for titles the API still returned.
+    static func preferencePenalty(title: String, profile: UserProfile) -> Double {
+        let haystack = title.lowercased()
+        var penalty = 0.0
+        for dislike in profile.foodPreferences.dislikedIngredients {
+            if matches(haystack, query: dislike) { penalty += 2.0 }
+        }
+        for favourite in profile.foodPreferences.favouriteIngredients {
+            if matches(haystack, query: favourite) { penalty -= 0.20 }
+        }
+        for pantry in profile.foodPreferences.pantryIngredientNames {
+            if matches(haystack, query: pantry) { penalty -= 0.12 }
+        }
+        return penalty
+    }
+
+    static func matches(_ haystack: String, query: String) -> Bool {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return false }
+        return haystack.contains(needle)
     }
 
 
@@ -178,29 +208,128 @@ enum MealEngine {
         return Meal(slot: slot, name: name, components: components)
     }
 
-    /// Templates respect the dietary pattern — a vegan profile must never be
-    /// handed paneer or yogurt.
+    /// Picks the highest-scoring template that the person's diet allows and
+    /// their dislikes don't veto. Cuisine, favourites and pantry are soft
+    /// bonuses so the fallback still feels like their food when the API is down.
     private static func template(for slot: MealSlot, profile: UserProfile) -> (String, [(FoodItem, Double)]) {
-        let vegan = profile.dietaryPattern == .vegan
-
-        switch slot {
-        case .breakfast:
-            if vegan {
-                return ("Oats + Peanut Butter", [(FoodDatabase.oats, 60), (FoodDatabase.banana, 100), (FoodDatabase.peanutButter, 20)])
-            }
-            return ("Protein Oats + Yogurt", [(FoodDatabase.oats, 60), (FoodDatabase.greekYogurt, 200), (FoodDatabase.banana, 100), (FoodDatabase.peanutButter, 15)])
-        case .lunch:
-            if vegan {
-                return ("Tofu Sabzi + Rice", [(FoodDatabase.tofuFirm, 180), (FoodDatabase.basmatiRice, 200), (FoodDatabase.mixedVeg, 150), (FoodDatabase.oliveOil, 5)])
-            }
-            return ("Paneer Sabzi + Rice", [(FoodDatabase.paneer, 150), (FoodDatabase.basmatiRice, 200), (FoodDatabase.mixedVeg, 150), (FoodDatabase.oliveOil, 5)])
-        case .dinner:
-            return ("Moong Dal + Roti + Spinach", [(FoodDatabase.moongDal, 250), (FoodDatabase.roti, 90), (FoodDatabase.spinach, 100)])
-        case .snack:
-            if vegan {
-                return ("Chickpeas + Almonds", [(FoodDatabase.chana, 120), (FoodDatabase.almonds, 20)])
-            }
-            return ("Whey Shake + Almonds", [(FoodDatabase.whey, 30), (FoodDatabase.almonds, 20)])
+        let candidates = MealTemplate.all.filter { $0.slot == slot && $0.isAllowed(for: profile) }
+        let ranked = candidates.max { lhs, rhs in
+            lhs.score(for: profile) < rhs.score(for: profile)
         }
+        guard let best = ranked else {
+            return ("Mixed Plate", [(FoodDatabase.oats, 80), (FoodDatabase.banana, 100)])
+        }
+        return (best.name, best.foods)
     }
+}
+
+/// Offline meal options. First matching template used to be hardcoded South
+/// Asian vegetarian; scoring now picks among these using the person's tastes.
+private struct MealTemplate {
+    let name: String
+    let slot: MealSlot
+    let foods: [(FoodItem, Double)]
+    let cuisines: Set<CuisinePreference>
+    let diets: Set<DietaryPattern>
+
+    func isAllowed(for profile: UserProfile) -> Bool {
+        guard diets.contains(profile.dietaryPattern) else { return false }
+        for dislike in profile.foodPreferences.dislikedIngredients {
+            if foods.contains(where: { MealEngine.matches($0.0.name.lowercased(), query: dislike) }) {
+                return false
+            }
+        }
+        return true
+    }
+
+    func score(for profile: UserProfile) -> Int {
+        var score = 0
+        let resolved = profile.resolvedCuisines
+        if !resolved.isEmpty, !cuisines.isDisjoint(with: resolved) {
+            score += 5
+        }
+        for favourite in profile.foodPreferences.favouriteIngredients {
+            if foods.contains(where: { MealEngine.matches($0.0.name.lowercased(), query: favourite) }) {
+                score += 3
+            }
+        }
+        for pantry in profile.foodPreferences.pantryIngredientNames {
+            if foods.contains(where: { MealEngine.matches($0.0.name.lowercased(), query: pantry) }) {
+                score += 2
+            }
+        }
+        return score
+    }
+
+    static let all: [MealTemplate] = {
+        let veg: Set<DietaryPattern> = [.vegetarian, .omnivore, .pescatarian]
+        let vegan: Set<DietaryPattern> = [.vegan, .vegetarian, .omnivore, .pescatarian]
+        let pesc: Set<DietaryPattern> = [.pescatarian, .omnivore]
+        let omni: Set<DietaryPattern> = [.omnivore]
+        let anyCuisine: Set<CuisinePreference> = []
+
+        return [
+            MealTemplate(name: "Protein Oats + Yogurt", slot: .breakfast, foods: [
+                (FoodDatabase.oats, 60), (FoodDatabase.greekYogurt, 200),
+                (FoodDatabase.banana, 100), (FoodDatabase.peanutButter, 15)
+            ], cuisines: anyCuisine, diets: veg),
+            MealTemplate(name: "Oats + Peanut Butter", slot: .breakfast, foods: [
+                (FoodDatabase.oats, 60), (FoodDatabase.banana, 100), (FoodDatabase.peanutButter, 20)
+            ], cuisines: anyCuisine, diets: vegan),
+            MealTemplate(name: "Eggs + Roti", slot: .breakfast, foods: [
+                (FoodDatabase.egg, 120), (FoodDatabase.roti, 60), (FoodDatabase.spinach, 80)
+            ], cuisines: [.southAsian], diets: veg),
+            MealTemplate(name: "Yogurt + Feta Bowl", slot: .breakfast, foods: [
+                (FoodDatabase.greekYogurt, 200), (FoodDatabase.feta, 40), (FoodDatabase.banana, 80)
+            ], cuisines: [.mediterranean], diets: veg),
+
+            MealTemplate(name: "Paneer Sabzi + Rice", slot: .lunch, foods: [
+                (FoodDatabase.paneer, 150), (FoodDatabase.basmatiRice, 200),
+                (FoodDatabase.mixedVeg, 150), (FoodDatabase.oliveOil, 5)
+            ], cuisines: [.southAsian], diets: veg),
+            MealTemplate(name: "Tofu Sabzi + Rice", slot: .lunch, foods: [
+                (FoodDatabase.tofuFirm, 180), (FoodDatabase.basmatiRice, 200),
+                (FoodDatabase.mixedVeg, 150), (FoodDatabase.oliveOil, 5)
+            ], cuisines: [.southAsian, .eastAsian], diets: vegan),
+            MealTemplate(name: "Chickpea Salad", slot: .lunch, foods: [
+                (FoodDatabase.chana, 180), (FoodDatabase.feta, 40),
+                (FoodDatabase.mixedVeg, 150), (FoodDatabase.oliveOil, 8)
+            ], cuisines: [.mediterranean], diets: veg),
+            MealTemplate(name: "Chicken + Rice", slot: .lunch, foods: [
+                (FoodDatabase.chickenBreast, 160), (FoodDatabase.basmatiRice, 200),
+                (FoodDatabase.mixedVeg, 150), (FoodDatabase.oliveOil, 5)
+            ], cuisines: [.american, .southAsian], diets: omni),
+            MealTemplate(name: "Salmon + Potatoes", slot: .lunch, foods: [
+                (FoodDatabase.salmon, 150), (FoodDatabase.potatoes, 200), (FoodDatabase.mixedVeg, 120)
+            ], cuisines: [.american, .mediterranean], diets: pesc),
+            MealTemplate(name: "Black Bean Bowl", slot: .lunch, foods: [
+                (FoodDatabase.blackBeans, 200), (FoodDatabase.basmatiRice, 160),
+                (FoodDatabase.mixedVeg, 150), (FoodDatabase.oliveOil, 8)
+            ], cuisines: [.latin, .american], diets: vegan),
+
+            MealTemplate(name: "Moong Dal + Roti + Spinach", slot: .dinner, foods: [
+                (FoodDatabase.moongDal, 250), (FoodDatabase.roti, 90), (FoodDatabase.spinach, 100)
+            ], cuisines: [.southAsian], diets: vegan),
+            MealTemplate(name: "Tofu + Veg", slot: .dinner, foods: [
+                (FoodDatabase.tofuFirm, 180), (FoodDatabase.mixedVeg, 180),
+                (FoodDatabase.basmatiRice, 150), (FoodDatabase.oliveOil, 5)
+            ], cuisines: [.eastAsian], diets: vegan),
+            MealTemplate(name: "Chicken + Potatoes", slot: .dinner, foods: [
+                (FoodDatabase.chickenBreast, 170), (FoodDatabase.potatoes, 220), (FoodDatabase.mixedVeg, 140)
+            ], cuisines: [.american], diets: omni),
+            MealTemplate(name: "Salmon + Veg", slot: .dinner, foods: [
+                (FoodDatabase.salmon, 160), (FoodDatabase.mixedVeg, 180), (FoodDatabase.oliveOil, 5)
+            ], cuisines: [.mediterranean, .american], diets: pesc),
+
+            MealTemplate(name: "Whey Shake + Almonds", slot: .snack, foods: [
+                (FoodDatabase.whey, 30), (FoodDatabase.almonds, 20)
+            ], cuisines: anyCuisine, diets: veg),
+            MealTemplate(name: "Chickpeas + Almonds", slot: .snack, foods: [
+                (FoodDatabase.chana, 120), (FoodDatabase.almonds, 20)
+            ], cuisines: anyCuisine, diets: vegan),
+            MealTemplate(name: "Yogurt + Almonds", slot: .snack, foods: [
+                (FoodDatabase.greekYogurt, 180), (FoodDatabase.almonds, 15)
+            ], cuisines: anyCuisine, diets: veg)
+        ]
+    }()
 }

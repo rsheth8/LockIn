@@ -68,6 +68,42 @@ final class SleepEngineTests: XCTestCase {
     }
 }
 
+final class ScheduleSlotterTests: XCTestCase {
+    private func interval(fromHour: Int, toHour: Int) -> ScheduleSlotter.Interval {
+        ScheduleSlotter.Interval(start: Fixture.todayAt(hour: fromHour), end: Fixture.todayAt(hour: toHour))
+    }
+
+    func testPreferredTimeWinsWhenTheWindowIsFree() {
+        let start = ScheduleSlotter.firstFit(
+            duration: 25 * 60,
+            preferred: Fixture.todayAt(hour: 13),
+            window: interval(fromHour: 11, toHour: 15),
+            occupied: []
+        )
+        XCTAssertEqual(start.timeIntervalSince(Fixture.todayAt(hour: 13)), 0, accuracy: 1)
+    }
+
+    func testCollisionSlidesToJustAfterTheBlock() {
+        let start = ScheduleSlotter.firstFit(
+            duration: 25 * 60,
+            preferred: Fixture.todayAt(hour: 13),
+            window: interval(fromHour: 11, toHour: 15),
+            occupied: [interval(fromHour: 13, toHour: 14)]
+        )
+        XCTAssertEqual(start.timeIntervalSince(Fixture.todayAt(hour: 14)), 0, accuracy: 1)
+    }
+
+    func testOverlappingOccupiedBlocksAreMerged() {
+        let merged = ScheduleSlotter.merge([
+            interval(fromHour: 10, toHour: 12),
+            interval(fromHour: 11, toHour: 13)
+        ])
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged[0].start, Fixture.todayAt(hour: 10))
+        XCTAssertEqual(merged[0].end, Fixture.todayAt(hour: 13))
+    }
+}
+
 final class ScheduleEngineTests: XCTestCase {
 
     private func build(profile: UserProfile = Fixture.rahil, busy: [BusyBlock] = []) -> DaySchedule {
@@ -177,6 +213,54 @@ final class ScheduleEngineTests: XCTestCase {
         let titles = schedule.events.filter { $0.kind == .meal }.map(\.title)
         XCTAssertTrue(titles.contains { Fixture.recipePool.map(\.title).contains($0) },
                       "Live meals should replace fallback meals, got \(titles)")
+    }
+
+    func testCalendarCommitmentsAppearOnTheTimeline() {
+        let busy = [Fixture.busy("Lecture", fromHour: 10, toHour: 11)]
+        let titles = build(busy: busy).events.filter { $0.kind == .commitment }.map(\.title)
+        XCTAssertEqual(titles, ["Lecture"])
+    }
+
+    func testRemindersAppearOnTheTimeline() {
+        let task = DayTask(id: "r1", title: "Email coach", due: Fixture.todayAt(hour: 11), notes: nil)
+        let macros = MetabolicEngine.dailyTargets(for: Fixture.rahil)
+        let sleep = SleepEngine.plan(for: Fixture.rahil, busyBlocks: [])
+        let schedule = ScheduleEngine.buildDay(profile: Fixture.rahil, macros: macros, sleepPlan: sleep,
+                                               busyBlocks: [], date: Date(), tasks: [task])
+        let tasks = schedule.events.filter { $0.kind == .task }
+        XCTAssertEqual(tasks.map(\.title), ["Email coach"])
+        XCTAssertEqual(tasks.first?.isCritical, false)
+    }
+
+    func testLunchMovesWhenThePreferredHourIsBooked() {
+        let busy = [Fixture.busy("Seminar", fromHour: 13, toHour: 14)]
+        let preferred = Fixture.todayAt(hour: 13)
+        guard let lunch = build(busy: busy).events.filter({ $0.kind == .meal })
+            .min(by: { abs($0.time.timeIntervalSince(preferred)) < abs($1.time.timeIntervalSince(preferred)) }) else {
+            return XCTFail("Expected a midday meal")
+        }
+        XCTAssertFalse(lunch.time < busy[0].end && lunch.endTime > busy[0].start,
+                       "Lunch stayed on top of the seminar (\(lunch.time))")
+    }
+
+    func testMealsDoNotOverlapCalendarCommitments() {
+        let busy = [
+            Fixture.busy("Morning lab", fromHour: 11, toHour: 13),
+            Fixture.busy("Evening class", fromHour: 18, toHour: 20)
+        ]
+        let meals = build(busy: busy).events.filter { $0.kind == .meal }
+        for meal in meals {
+            for block in busy {
+                let overlaps = meal.time < block.end && meal.endTime > block.start
+                XCTAssertFalse(overlaps, "\(meal.title) overlapped \(block.title)")
+            }
+        }
+    }
+
+    func testCommitmentIsNotCritical() {
+        let event = build(busy: [Fixture.busy("Office hours", fromHour: 15, toHour: 16)])
+            .events.first { $0.kind == .commitment }
+        XCTAssertEqual(event?.isCritical, false)
     }
 
     func testWorkoutReflectsSelectedFitnessGoals() {

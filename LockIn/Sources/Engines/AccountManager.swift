@@ -122,15 +122,20 @@ final class AccountManager: NSObject, ObservableObject {
 
         GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
         GIDSignIn.sharedInstance.signIn(withPresenting: presenter) { [weak self] result, error in
-            guard let self else { return }
-            if let error {
-                // -5 is the user cancelling the sheet.
-                if (error as NSError).code == -5 { return }
-                self.lastError = error.localizedDescription
-                return
+            // GoogleSignIn's completion isn't guaranteed to land on the main
+            // actor, but this class is — hop explicitly rather than mutating
+            // @MainActor state from a nonisolated context.
+            Task { @MainActor in
+                guard let self else { return }
+                if let error {
+                    // -5 is the user cancelling the sheet.
+                    if (error as NSError).code == -5 { return }
+                    self.lastError = error.localizedDescription
+                    return
+                }
+                guard let user = result?.user, let userID = user.userID else { return }
+                self.persist(provider: .google, userID: userID, name: user.profile?.name)
             }
-            guard let user = result?.user, let userID = user.userID else { return }
-            self.persist(provider: .google, userID: userID, name: user.profile?.name)
         }
     }
 
@@ -143,10 +148,12 @@ final class AccountManager: NSObject, ObservableObject {
     func restoreGoogleSessionIfNeeded() {
         guard case .signedIn(.google, _) = state else { return }
         GIDSignIn.sharedInstance.restorePreviousSignIn { [weak self] user, _ in
-            guard user == nil else { return }
-            // The Google session is gone — drop back to signed out rather than
-            // pretending we still have an identity.
-            self?.signOut()
+            Task { @MainActor in
+                guard user == nil else { return }
+                // The Google session is gone — drop back to signed out rather than
+                // pretending we still have an identity.
+                self?.signOut()
+            }
         }
     }
 

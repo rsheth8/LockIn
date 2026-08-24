@@ -36,23 +36,37 @@ actor SpoonacularClient {
     /// Filters are relaxed progressively because stacking them yields nothing:
     /// `diet=vegetarian&cuisine=Indian&minProtein=31` returns *zero* results
     /// against the live API, which silently sent every South-Asian vegetarian
-    /// user to the offline fallback forever. Cuisine is only a preference, so
-    /// it's dropped first; the protein floor is dropped last because macro
-    /// matching can partly compensate but an empty pool can't.
+    /// user to the offline fallback forever.
+    ///
+    /// Preferences (cuisine, include-ingredients) drop first. Hard exclusions
+    /// — diet, disliked ingredients, medical intolerances — are never relaxed.
+    /// The protein floor is dropped last because macro matching can partly
+    /// compensate but an empty pool can't.
     func recipePool(profile: UserProfile, mealType: MealType? = nil,
                     minProteinPerServing: Int = 20, count: Int = 40) async throws -> [SpoonacularRecipe] {
         guard Secrets.spoonacularKey != nil else { throw ClientError.missingKey }
 
-        let attempts: [(cuisine: Bool, minProtein: Int?)] = [
-            (cuisine: true, minProtein: minProteinPerServing),
-            (cuisine: false, minProtein: minProteinPerServing),
-            (cuisine: true, minProtein: nil),
-            (cuisine: false, minProtein: nil)
+        let hasCuisine = !profile.resolvedCuisines.isEmpty
+        let hasInclude = !profile.foodPreferences.searchIncludeIngredients.isEmpty
+
+        var attempts: [(include: Bool, cuisine: Bool, minProtein: Int?)] = [
+            (include: hasInclude, cuisine: hasCuisine, minProtein: minProteinPerServing),
+            (include: false, cuisine: hasCuisine, minProtein: minProteinPerServing),
+            (include: false, cuisine: false, minProtein: minProteinPerServing),
+            (include: false, cuisine: false, minProtein: nil)
         ]
+        // Drop duplicate attempts when a preference isn't set, so we don't
+        // spend quota on identical queries.
+        var seen = Set<String>()
+        attempts = attempts.filter { attempt in
+            let key = "\(attempt.include)|\(attempt.cuisine)|\(attempt.minProtein ?? -1)"
+            return seen.insert(key).inserted
+        }
 
         var best: [SpoonacularRecipe] = []
         for attempt in attempts {
             let results = try await search(profile: profile, count: count, mealType: mealType,
+                                           includeIngredients: attempt.include,
                                            includeCuisine: attempt.cuisine,
                                            minProtein: attempt.minProtein)
             if results.count > best.count { best = results }
@@ -80,7 +94,8 @@ actor SpoonacularClient {
     }
 
     private func search(profile: UserProfile, count: Int, mealType: MealType?,
-                        includeCuisine: Bool, minProtein: Int?) async throws -> [SpoonacularRecipe] {
+                        includeIngredients: Bool, includeCuisine: Bool,
+                        minProtein: Int?) async throws -> [SpoonacularRecipe] {
         guard let key = Secrets.spoonacularKey else { throw ClientError.missingKey }
 
         var components = URLComponents(string: "\(host)/recipes/complexSearch")!
@@ -99,11 +114,25 @@ actor SpoonacularClient {
         if let diet = profile.dietaryPattern.spoonacularDiet {
             items.append(.init(name: "diet", value: diet))
         }
-        if includeCuisine, let cuisine = profile.cuisinePreference.spoonacularCuisine {
-            items.append(.init(name: "cuisine", value: cuisine))
+        if includeCuisine {
+            let cuisines = profile.resolvedCuisines.compactMap(\.spoonacularCuisine)
+            if !cuisines.isEmpty {
+                items.append(.init(name: "cuisine", value: cuisines.joined(separator: ",")))
+            }
         }
-        if !profile.allergies.isEmpty {
-            items.append(.init(name: "intolerances", value: profile.allergies.joined(separator: ",")))
+        if includeIngredients {
+            let include = profile.foodPreferences.searchIncludeIngredients
+            if !include.isEmpty {
+                items.append(.init(name: "includeIngredients", value: include.joined(separator: ",")))
+            }
+        }
+        let excluded = profile.foodPreferences.dislikedIngredients.reduced()
+        if !excluded.isEmpty {
+            items.append(.init(name: "excludeIngredients", value: excluded.joined(separator: ",")))
+        }
+        let intolerances = profile.effectiveIntolerances
+        if !intolerances.isEmpty {
+            items.append(.init(name: "intolerances", value: intolerances.joined(separator: ",")))
         }
         components.queryItems = items
 

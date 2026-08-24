@@ -128,12 +128,18 @@ struct UserProfile: Codable, Equatable, Identifiable {
     var currentWeightLbs: Double
     var goalWeightLbs: Double
     var goalDirection: GoalDirection
+    /// How hard to push the calorie gap. Only meaningful for cut and gain.
+    /// Defaults to aggressive so a new cut moves faster than the old fixed 22%.
+    var deficitIntensity: DeficitIntensity = .aggressive
     var activityLevel: ActivityLevel
     var equipment: [Equipment]
     var hasAppleWatch: Bool
     var fitnessGoals: Set<FitnessGoal>
     var dietaryPattern: DietaryPattern
+    /// Kept as the primary cuisine for backwards compatibility with saved
+    /// profiles; `foodPreferences.cuisines` is the multi-select the UI uses.
     var cuisinePreference: CuisinePreference
+    var foodPreferences: FoodPreferences = .empty
     var allergies: [String]
     var mealsPerDay: Int
     var wakeConstraintEarliest: DateComponents?   // e.g. can't wake before class needs, optional
@@ -188,9 +194,125 @@ struct UserProfile: Codable, Equatable, Identifiable {
         profile.fitnessGoals = [.fatLoss, .fastBowling, .hikingBackpacking]
         profile.dietaryPattern = .vegetarian
         profile.cuisinePreference = .southAsian
+        profile.deficitIntensity = .maximum
+        profile.foodPreferences = FoodPreferences(
+            cuisines: [.southAsian],
+            favouriteIngredients: ["paneer", "dal", "yogurt", "roti", "basmati"],
+            dislikedIngredients: [],
+            intolerances: [],
+            pantry: [
+                PantryItem(name: "paneer"),
+                PantryItem(name: "moong dal"),
+                PantryItem(name: "basmati rice"),
+                PantryItem(name: "spinach"),
+                PantryItem(name: "greek yogurt"),
+                PantryItem(name: "roti")
+            ]
+        )
         profile.toneIntensity = .toughLove
         profile.accountabilityMode = [.scheduledCheckIns, .screenTime]
         return profile
+    }
+
+    /// Cuisines actually used for planning — prefers the multi-select, falls
+    /// back to the legacy single field so older profiles still bias search.
+    var resolvedCuisines: Set<CuisinePreference> {
+        let selected = foodPreferences.cuisines.subtracting([.noPreference])
+        if !selected.isEmpty { return selected }
+        if cuisinePreference != .noPreference { return [cuisinePreference] }
+        return []
+    }
+
+    /// Medical exclusions from either field. Never relaxed in recipe search.
+    var effectiveIntolerances: [String] {
+        (allergies + foodPreferences.intolerances).reduced()
+    }
+
+    /// Keep the legacy fields in sync so older code paths and saved JSON stay coherent.
+    mutating func syncLegacyFoodFields() {
+        if foodPreferences.cuisines.isEmpty, cuisinePreference != .noPreference {
+            foodPreferences.cuisines = [cuisinePreference]
+        }
+        cuisinePreference = foodPreferences.primaryCuisine
+        let merged = effectiveIntolerances
+        allergies = merged
+        foodPreferences.intolerances = merged
+    }
+}
+
+extension UserProfile {
+    enum CodingKeys: String, CodingKey {
+        case id, appleUserIdentifier, name, age, sex, heightInches
+        case currentWeightLbs, goalWeightLbs, goalDirection, deficitIntensity
+        case activityLevel, equipment, hasAppleWatch, fitnessGoals
+        case dietaryPattern, cuisinePreference, foodPreferences, allergies
+        case mealsPerDay, wakeConstraintEarliest, toneIntensity, accentColor
+        case accountabilityMode, weightHistory
+    }
+
+    /// Older saved profiles predate intensity and food preferences. Missing
+    /// keys must not wipe the user's setup on upgrade.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        appleUserIdentifier = try c.decodeIfPresent(String.self, forKey: .appleUserIdentifier)
+        name = try c.decode(String.self, forKey: .name)
+        age = try c.decode(Int.self, forKey: .age)
+        sex = try c.decode(Sex.self, forKey: .sex)
+        heightInches = try c.decode(Double.self, forKey: .heightInches)
+        currentWeightLbs = try c.decode(Double.self, forKey: .currentWeightLbs)
+        goalWeightLbs = try c.decode(Double.self, forKey: .goalWeightLbs)
+        goalDirection = try c.decode(GoalDirection.self, forKey: .goalDirection)
+        deficitIntensity = try c.decodeIfPresent(DeficitIntensity.self, forKey: .deficitIntensity) ?? .aggressive
+        activityLevel = try c.decode(ActivityLevel.self, forKey: .activityLevel)
+        equipment = try c.decode([Equipment].self, forKey: .equipment)
+        hasAppleWatch = try c.decode(Bool.self, forKey: .hasAppleWatch)
+        fitnessGoals = try c.decode(Set<FitnessGoal>.self, forKey: .fitnessGoals)
+        dietaryPattern = try c.decode(DietaryPattern.self, forKey: .dietaryPattern)
+        cuisinePreference = try c.decode(CuisinePreference.self, forKey: .cuisinePreference)
+        foodPreferences = try c.decodeIfPresent(FoodPreferences.self, forKey: .foodPreferences) ?? .empty
+        allergies = try c.decode([String].self, forKey: .allergies)
+        mealsPerDay = try c.decode(Int.self, forKey: .mealsPerDay)
+        wakeConstraintEarliest = try c.decodeIfPresent(DateComponents.self, forKey: .wakeConstraintEarliest)
+        toneIntensity = try c.decode(ToneIntensity.self, forKey: .toneIntensity)
+        accentColor = try c.decode(AppAccent.self, forKey: .accentColor)
+        accountabilityMode = try c.decode(Set<AccountabilityTrigger>.self, forKey: .accountabilityMode)
+        weightHistory = try c.decode([WeightEntry].self, forKey: .weightHistory)
+
+        if foodPreferences.cuisines.isEmpty, cuisinePreference != .noPreference {
+            foodPreferences.cuisines = [cuisinePreference]
+        }
+        if foodPreferences.intolerances.isEmpty, !allergies.isEmpty {
+            foodPreferences.intolerances = allergies
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(appleUserIdentifier, forKey: .appleUserIdentifier)
+        try c.encode(name, forKey: .name)
+        try c.encode(age, forKey: .age)
+        try c.encode(sex, forKey: .sex)
+        try c.encode(heightInches, forKey: .heightInches)
+        try c.encode(currentWeightLbs, forKey: .currentWeightLbs)
+        try c.encode(goalWeightLbs, forKey: .goalWeightLbs)
+        try c.encode(goalDirection, forKey: .goalDirection)
+        try c.encode(deficitIntensity, forKey: .deficitIntensity)
+        try c.encode(activityLevel, forKey: .activityLevel)
+        try c.encode(equipment, forKey: .equipment)
+        try c.encode(hasAppleWatch, forKey: .hasAppleWatch)
+        try c.encode(fitnessGoals, forKey: .fitnessGoals)
+        try c.encode(dietaryPattern, forKey: .dietaryPattern)
+        try c.encode(cuisinePreference, forKey: .cuisinePreference)
+        try c.encode(foodPreferences, forKey: .foodPreferences)
+        try c.encode(allergies, forKey: .allergies)
+        try c.encode(mealsPerDay, forKey: .mealsPerDay)
+        try c.encodeIfPresent(wakeConstraintEarliest, forKey: .wakeConstraintEarliest)
+        try c.encode(toneIntensity, forKey: .toneIntensity)
+        try c.encode(accentColor, forKey: .accentColor)
+        try c.encode(accountabilityMode, forKey: .accountabilityMode)
+        try c.encode(weightHistory, forKey: .weightHistory)
     }
 }
 

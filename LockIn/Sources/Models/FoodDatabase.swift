@@ -23,6 +23,12 @@ enum FoodDatabase {
     static let peanutButter = FoodItem(name: "Peanut Butter", per100g: .init(calories: 588, proteinG: 25, fatG: 50, carbG: 20))
     static let banana = FoodItem(name: "Banana", per100g: .init(calories: 89, proteinG: 1.1, fatG: 0.3, carbG: 23))
     static let oliveOil = FoodItem(name: "Olive Oil", per100g: .init(calories: 884, proteinG: 0, fatG: 100, carbG: 0))
+    static let chickenBreast = FoodItem(name: "Chicken Breast (cooked)", per100g: .init(calories: 165, proteinG: 31, fatG: 3.6, carbG: 0))
+    static let salmon = FoodItem(name: "Salmon (cooked)", per100g: .init(calories: 208, proteinG: 20, fatG: 13, carbG: 0))
+    static let blackBeans = FoodItem(name: "Black Beans (cooked)", per100g: .init(calories: 132, proteinG: 9, fatG: 0.5, carbG: 24))
+    static let potatoes = FoodItem(name: "Potatoes (cooked)", per100g: .init(calories: 87, proteinG: 2, fatG: 0.1, carbG: 20))
+    static let feta = FoodItem(name: "Feta", per100g: .init(calories: 264, proteinG: 14, fatG: 21, carbG: 4))
+    static let tofuSilken = FoodItem(name: "Silken Tofu", per100g: .init(calories: 55, proteinG: 5, fatG: 3, carbG: 2))
 
-    static let all: [FoodItem] = [paneer, tofuFirm, moongDal, chana, greekYogurt, whey, egg, basmatiRice, roti, oats, spinach, mixedVeg, almonds, peanutButter, banana, oliveOil]
+    static let all: [FoodItem] = [paneer, tofuFirm, moongDal, chana, greekYogurt, whey, egg, basmatiRice, roti, oats, spinach, mixedVeg, almonds, peanutButter, banana, oliveOil, chickenBreast, salmon, blackBeans, potatoes, feta, tofuSilken]
 }

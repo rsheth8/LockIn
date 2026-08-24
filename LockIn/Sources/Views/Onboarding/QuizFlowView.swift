@@ -14,7 +14,7 @@ struct QuizFlowView: View {
     @State private var step: Step = .welcome
 
     enum Step: Int, CaseIterable {
-        case welcome, name, body, direction, targetWeight, activity, diet, cuisine, equipment, sport, meals, tone, review
+        case welcome, name, body, direction, targetWeight, intensity, activity, diet, cuisine, tastes, pantry, equipment, sport, meals, tone, review
 
         /// Steps that don't apply to every path get skipped rather than shown
         /// with a "not applicable" state.
@@ -36,8 +36,8 @@ struct QuizFlowView: View {
 
         func applies(to profile: UserProfile) -> Bool {
             switch self {
-            // Maintaining doesn't need a target weight.
             case .targetWeight: return profile.goalDirection != .maintain
+            case .intensity: return profile.goalDirection == .cut || profile.goalDirection == .gain
             default: return true
             }
         }
@@ -135,9 +135,12 @@ struct QuizFlowView: View {
         case .body: bodyStep
         case .direction: directionStep
         case .targetWeight: targetWeightStep
+        case .intensity: intensityStep
         case .activity: activityStep
         case .diet: dietStep
         case .cuisine: cuisineStep
+        case .tastes: tastesStep
+        case .pantry: pantryStep
         case .equipment: equipmentStep
         case .sport: sportStep
         case .meals: mealsStep
@@ -275,16 +278,90 @@ struct QuizFlowView: View {
         }
     }
 
-    private var cuisineStep: some View {
-        QuizStep(label: "Food", title: "What do you actually like?") {
-            ForEach(Array(CuisinePreference.allCases.enumerated()), id: \.element) { index, cuisine in
+    private var intensityStep: some View {
+        QuizStep(label: "Pace", title: "How fast do you want to move?") {
+            ForEach(Array(DeficitIntensity.allCases.enumerated()), id: \.element) { index, intensity in
                 if index > 0 { LedgerRule() }
-                QuizSelectRow(title: cuisine.displayName, subtitle: "",
-                              isSelected: profile.cuisinePreference == cuisine, accent: accent) {
-                    profile.cuisinePreference = cuisine
+                let preview = intensityPreview(intensity)
+                QuizSelectRow(
+                    title: "\(intensity.displayName)  ·  \(preview.calories) kcal",
+                    subtitle: preview.subtitle,
+                    isSelected: profile.deficitIntensity == intensity,
+                    accent: accent
+                ) {
+                    profile.deficitIntensity = intensity
                 }
             }
-            Text("Biases recipe search so the plan is food you'd eat anyway. Adherence beats optimality.")
+            Text("Faster is a real option — it just isn't free. Protein goes up with the gap so more of what you lose is fat.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.inkMuted)
+                .padding(.top, 12)
+        }
+    }
+
+    private var cuisineStep: some View {
+        QuizStep(label: "Food", title: "Which kitchens do you actually cook from?") {
+            QuizSelectRow(title: "No preference", subtitle: "Don't bias the search",
+                          isSelected: profile.foodPreferences.cuisines.isEmpty, accent: accent) {
+                profile.foodPreferences.cuisines = []
+                profile.cuisinePreference = .noPreference
+            }
+            ForEach(Array(CuisinePreference.allCases.filter { $0 != .noPreference }.enumerated()), id: \.element) { _, cuisine in
+                LedgerRule()
+                QuizSelectRow(title: cuisine.displayName, subtitle: "",
+                              isSelected: profile.foodPreferences.cuisines.contains(cuisine), accent: accent) {
+                    toggleCuisine(cuisine)
+                }
+            }
+            Text("Pick as many as you want. The plan leans toward these instead of generic diet food.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.inkMuted)
+                .padding(.top, 12)
+        }
+    }
+
+    private var tastesStep: some View {
+        QuizStep(label: "Food", title: "What should show up on the plate?") {
+            Text("Favourites").ledgerLabel().padding(.bottom, 4)
+            IngredientChipEditor(
+                placeholder: "paneer, yogurt, eggs…",
+                suggestions: favouriteSuggestions,
+                items: $profile.foodPreferences.favouriteIngredients,
+                accent: accent
+            )
+            .padding(.bottom, 22)
+
+            Text("Hard no").ledgerLabel().padding(.bottom, 4)
+            IngredientChipEditor(
+                placeholder: "Something you won't eat",
+                suggestions: [],
+                items: $profile.foodPreferences.dislikedIngredients,
+                accent: accent
+            )
+            .padding(.bottom, 22)
+
+            Text("Allergies / intolerances").ledgerLabel().padding(.bottom, 4)
+            IngredientChipEditor(
+                placeholder: "peanut, dairy, gluten…",
+                suggestions: ["peanut", "dairy", "gluten", "soy", "shellfish"],
+                items: intolerancesBinding,
+                accent: accent
+            )
+            Text("Intolerances are never relaxed in search. Dislikes are also excluded, but they're a preference, not a medical constraint.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.inkMuted)
+                .padding(.top, 12)
+        }
+    }
+
+    private var pantryStep: some View {
+        QuizStep(label: "Kitchen", title: "What's already at home?") {
+            PantryEditor(
+                pantry: $profile.foodPreferences.pantry,
+                suggestions: PantrySuggestions.forCuisines(profile.resolvedCuisines, pattern: profile.dietaryPattern),
+                accent: accent
+            )
+            Text("The planner will try to use these first so you're not shopping for a new ingredient every day. Skip anything you're out of.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.inkMuted)
                 .padding(.top, 12)
@@ -372,6 +449,14 @@ struct QuizFlowView: View {
                 reviewRow("Carbs", "\(targets.carbGrams) g")
                 LedgerRule()
                 reviewRow("Adjustment", targets.adjustmentLabel)
+                if profile.goalDirection == .cut || profile.goalDirection == .gain {
+                    LedgerRule()
+                    reviewRow("Pace", profile.deficitIntensity.displayName)
+                }
+                if !profile.resolvedCuisines.isEmpty {
+                    LedgerRule()
+                    reviewRow("Kitchens", profile.resolvedCuisines.map(\.displayName).sorted().joined(separator: ", "))
+                }
                 if profile.goalDirection != .maintain && weeks.isFinite {
                     LedgerRule()
                     reviewRow("Estimated", "\(Int(weeks.rounded())) weeks")
@@ -437,9 +522,49 @@ struct QuizFlowView: View {
     private func finish() {
         profile.fitnessGoals.insert(.fatLoss)
         profile.weightHistory = [WeightEntry(date: Date(), weightLbs: profile.currentWeightLbs)]
+        profile.syncLegacyFoodFields()
         appState.saveProfile(profile)
         Haptics.milestone()
         Task { _ = await NotificationManager.shared.requestAuthorization() }
+    }
+
+    private func toggleCuisine(_ cuisine: CuisinePreference) {
+        if profile.foodPreferences.cuisines.contains(cuisine) {
+            profile.foodPreferences.cuisines.remove(cuisine)
+        } else {
+            profile.foodPreferences.cuisines.insert(cuisine)
+        }
+        profile.cuisinePreference = profile.foodPreferences.primaryCuisine
+    }
+
+    private func intensityPreview(_ intensity: DeficitIntensity) -> (calories: Int, subtitle: String) {
+        var preview = profile
+        preview.deficitIntensity = intensity
+        let targets = MetabolicEngine.dailyTargets(for: preview)
+        let weeks = MetabolicEngine.estimatedWeeksToGoal(profile: preview, targets: targets)
+        var line = intensity.blurb
+        if weeks.isFinite {
+            line += " About \(Int(weeks.rounded())) weeks to goal."
+        }
+        if targets.hitSafetyFloor {
+            line += " Floor applied."
+        }
+        return (targets.calories, line)
+    }
+
+    private var favouriteSuggestions: [String] {
+        PantrySuggestions.forCuisines(profile.resolvedCuisines, pattern: profile.dietaryPattern)
+    }
+
+    private var intolerancesBinding: Binding<[String]> {
+        Binding(
+            get: { profile.effectiveIntolerances },
+            set: { newValue in
+                let cleaned = newValue.reduced()
+                profile.allergies = cleaned
+                profile.foodPreferences.intolerances = cleaned
+            }
+        )
     }
 }
 

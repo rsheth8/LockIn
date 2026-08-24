@@ -50,6 +50,36 @@ final class MealEngineTests: XCTestCase {
         XCTAssertTrue(names.contains { $0.contains("paneer") || $0.contains("yogurt") || $0.contains("whey") })
     }
 
+    func testDislikedIngredientIsLeftOutOfTheLocalPlan() {
+        var profile = Fixture.rahil
+        profile.foodPreferences.dislikedIngredients = ["paneer"]
+        let names = MealEngine.buildDay(macros: MetabolicEngine.dailyTargets(for: profile), profile: profile)
+            .flatMap { $0.components.map { $0.food.name.lowercased() } }
+        XCTAssertFalse(names.contains { $0.contains("paneer") })
+        XCTAssertTrue(names.contains { $0.contains("tofu") }, "South-Asian lunch should fall back to tofu")
+    }
+
+    func testFavouriteIngredientBeatsAGenericTemplate() {
+        var profile = Fixture.femaleCut
+        profile.dietaryPattern = .omnivore
+        profile.cuisinePreference = .american
+        profile.foodPreferences.cuisines = [.american]
+        profile.foodPreferences.favouriteIngredients = ["chicken"]
+        let names = MealEngine.buildDay(macros: MetabolicEngine.dailyTargets(for: profile), profile: profile)
+            .flatMap { $0.components.map { $0.food.name.lowercased() } }
+        XCTAssertTrue(names.contains { $0.contains("chicken") })
+    }
+
+    func testFitCostPrefersAFavouriteTitleWhenMacrosAreClose() {
+        var profile = Fixture.rahil
+        profile.foodPreferences.favouriteIngredients = ["paneer"]
+        let paneer = Fixture.recipe(id: 1, title: "Paneer Bowl", calories: 510, protein: 40)
+        let generic = Fixture.recipe(id: 2, title: "Generic Bowl", calories: 500, protein: 40)
+        let paneerCost = MealEngine.fitCost(paneer, targetCalories: 500, targetProtein: 40, profile: profile)
+        let genericCost = MealEngine.fitCost(generic, targetCalories: 500, targetProtein: 40, profile: profile)
+        XCTAssertLessThan(paneerCost, genericCost)
+    }
+
     func testMealMacrosScaleLinearlyWithGrams() {
         let component = MealComponent(food: FoodDatabase.paneer, gramsToWeigh: 200)
         // Paneer is 265 kcal / 18 g protein per 100 g.

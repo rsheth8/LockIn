@@ -48,7 +48,17 @@ final class RecipeCache {
 
     /// Identifies what a cached plan was generated for.
     static func signature(calories: Int, profile: UserProfile) -> String {
-        "\(calories)|\(profile.dietaryPattern.rawValue)|\(profile.cuisinePreference.rawValue)|\(profile.allergies.sorted().joined(separator: ","))"
+        let prefs = profile.foodPreferences
+        let cuisines = profile.resolvedCuisines.map(\.rawValue).sorted().joined(separator: ",")
+        return [
+            String(calories),
+            profile.dietaryPattern.rawValue,
+            cuisines,
+            prefs.favouriteIngredients.reduced().joined(separator: ","),
+            prefs.dislikedIngredients.reduced().joined(separator: ","),
+            profile.effectiveIntolerances.joined(separator: ","),
+            prefs.pantryIngredientNames.joined(separator: ",")
+        ].joined(separator: "|")
     }
 
     // MARK: - Quota

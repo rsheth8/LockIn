@@ -110,7 +110,7 @@ final class SpoonacularClientTests: XCTestCase {
 
         let pool = try await client.recipePool(profile: Fixture.rahil, minProteinPerServing: 31)
         XCTAssertEqual(pool.count, 4, "Should keep the best attempt rather than the last")
-        XCTAssertEqual(MockURLProtocol.requestedURLs.count, 4, "All four attempts should be tried")
+        XCTAssertEqual(MockURLProtocol.requestedURLs.count, 3, "Cuisine-off and protein-off attempts, no duplicate include")
     }
 
     // MARK: - Query construction
@@ -140,6 +140,35 @@ final class SpoonacularClientTests: XCTestCase {
         let url = MockURLProtocol.requestedURLs[0].absoluteString
         XCTAssertTrue(url.contains("intolerances=peanut,soy") || url.contains("intolerances=peanut%2Csoy"),
                       "Allergies must reach the query: \(url)")
+    }
+
+    func testPantryAndFavouritesAreSentAsIncludeIngredients() async throws {
+        var profile = Fixture.rahil
+        profile.foodPreferences.favouriteIngredients = ["paneer"]
+        profile.foodPreferences.pantry = [PantryItem(name: "spinach")]
+        MockURLProtocol.handler = { _ in (200, self.body(count: 20)) }
+        _ = try await client.recipePool(profile: profile, minProteinPerServing: 20)
+
+        let url = MockURLProtocol.requestedURLs[0].absoluteString
+        XCTAssertTrue(url.contains("includeIngredients="), "First attempt should use pantry/favourites: \(url)")
+        XCTAssertTrue(url.contains("spinach") || url.contains("paneer"), url)
+    }
+
+    func testDislikesAreExcludedOnEveryAttempt() async throws {
+        var profile = Fixture.rahil
+        profile.foodPreferences.dislikedIngredients = ["mushroom"]
+        MockURLProtocol.handler = { request in
+            let url = request.url!.absoluteString
+            return (200, url.contains("cuisine=Indian") ? self.body(count: 0) : self.body(count: 2))
+        }
+        _ = try await client.recipePool(profile: profile, minProteinPerServing: 31)
+
+        XCTAssertFalse(MockURLProtocol.requestedURLs.isEmpty)
+        for url in MockURLProtocol.requestedURLs {
+            XCTAssertTrue(url.absoluteString.contains("excludeIngredients=mushroom")
+                          || url.absoluteString.contains("excludeIngredients=mushroom".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""),
+                          "Dislikes must never be relaxed: \(url)")
+        }
     }
 
     // MARK: - Error handling

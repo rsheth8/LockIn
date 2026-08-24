@@ -52,13 +52,57 @@ final class MetabolicEngineTests: XCTestCase {
     func testCutProducesDeficitBelowMaintenance() {
         let targets = MetabolicEngine.dailyTargets(for: Fixture.rahil)
         XCTAssertLessThan(targets.calories, targets.tdeeMaintenance)
-        XCTAssertEqual(Double(targets.calories) / Double(targets.tdeeMaintenance), 0.78, accuracy: 0.01)
+        let expectedGap = MetabolicEngine.dailyGapForRate(
+            percentPerWeek: DeficitIntensity.standard.weeklyRatePercent,
+            bodyweightLbs: Fixture.rahil.currentWeightLbs
+        )
+        XCTAssertEqual(Double(targets.tdeeMaintenance - targets.calories), expectedGap, accuracy: 2)
+    }
+
+    func testFasterIntensityProducesALargerDeficit() {
+        var profile = Fixture.rahil
+        profile.deficitIntensity = .steady
+        let steady = MetabolicEngine.dailyTargets(for: profile)
+        profile.deficitIntensity = .aggressive
+        let aggressive = MetabolicEngine.dailyTargets(for: profile)
+        profile.deficitIntensity = .maximum
+        let maximum = MetabolicEngine.dailyTargets(for: profile)
+
+        XCTAssertGreaterThan(steady.calories, aggressive.calories)
+        XCTAssertGreaterThan(aggressive.calories, maximum.calories)
+        XCTAssertGreaterThan(maximum.proteinGrams, aggressive.proteinGrams)
+    }
+
+    func testMaximumHitsTheSafetyFloorForRahil() {
+        var profile = Fixture.rahil
+        profile.deficitIntensity = .maximum
+        let targets = MetabolicEngine.dailyTargets(for: profile)
+        XCTAssertTrue(targets.hitSafetyFloor)
+        XCTAssertEqual(targets.calories, 1500)
     }
 
     func testGainProducesSurplusAboveMaintenance() {
         let targets = MetabolicEngine.dailyTargets(for: Fixture.maleGain)
         XCTAssertGreaterThan(targets.calories, targets.tdeeMaintenance)
-        XCTAssertEqual(Double(targets.calories) / Double(targets.tdeeMaintenance), 1.10, accuracy: 0.01)
+        XCTAssertLessThan(Double(targets.calories) / Double(targets.tdeeMaintenance), 1.12,
+                          "Lean-gain surplus should stay modest")
+    }
+
+    /// Regression: the gain-side rate mapping used to clamp every intensity
+    /// above `.steady` to the exact same 0.25%/week surplus (`min(rate, 0.25)`
+    /// saturates for every case since the smallest `weeklyRatePercent` is
+    /// already 0.5), silently making the pace picker inert for a bulk.
+    func testFasterIntensityProducesALargerSurplusForGain() {
+        var profile = Fixture.maleGain
+        profile.deficitIntensity = .steady
+        let steady = MetabolicEngine.dailyTargets(for: profile)
+        profile.deficitIntensity = .aggressive
+        let aggressive = MetabolicEngine.dailyTargets(for: profile)
+        profile.deficitIntensity = .maximum
+        let maximum = MetabolicEngine.dailyTargets(for: profile)
+
+        XCTAssertLessThan(steady.calories, aggressive.calories)
+        XCTAssertLessThan(aggressive.calories, maximum.calories)
     }
 
     func testMaintainSitsExactlyAtMaintenance() {
@@ -203,17 +247,19 @@ final class MetabolicEngineTests: XCTestCase {
     }
 
     func testNoAdvisoriesForAWellFormedPlan() {
+        var profile = Fixture.rahil
+        profile.deficitIntensity = .steady
         XCTAssertTrue(MetabolicEngine.advisories(
-            profile: Fixture.rahil,
-            targets: MetabolicEngine.dailyTargets(for: Fixture.rahil)
+            profile: profile,
+            targets: MetabolicEngine.dailyTargets(for: profile)
         ).isEmpty)
     }
 
     // MARK: - Labels
 
     func testAdjustmentLabelReflectsDirection() {
-        XCTAssertEqual(MetabolicEngine.dailyTargets(for: Fixture.rahil).adjustmentLabel, "22% deficit")
-        XCTAssertEqual(MetabolicEngine.dailyTargets(for: Fixture.maleGain).adjustmentLabel, "10% surplus")
+        XCTAssertTrue(MetabolicEngine.dailyTargets(for: Fixture.rahil).adjustmentLabel.contains("deficit"))
+        XCTAssertTrue(MetabolicEngine.dailyTargets(for: Fixture.maleGain).adjustmentLabel.contains("surplus"))
 
         var maintain = Fixture.rahil
         maintain.goalDirection = .maintain

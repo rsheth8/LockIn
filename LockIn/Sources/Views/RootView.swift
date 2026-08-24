@@ -43,29 +43,73 @@ struct RootView: View {
             await healthKitManager.requestAccess()
             await appState.syncWeightIfDue(healthKit: healthKitManager)
 
-            let busy = calendarManager.busyBlocks(for: Date())
-            // Render immediately off the local database, then upgrade in place
-            // if Spoonacular returns — the day's plan should never wait on a
-            // network round trip.
-            appState.regenerateToday(calendarBusyBlocks: busy)
-
-            let macros = MetabolicEngine.dailyTargets(for: appState.profile)
-            if let live = await MealEngine.liveMealsForToday(macros: macros, profile: appState.profile) {
-                appState.regenerateToday(calendarBusyBlocks: busy, liveMeals: live)
-            }
-
-            scheduleWorkoutLockInBlock()
+            rebuildToday()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 appState.drainDistractionEvents()
+                calendarManager.refreshIfNeeded()
             }
+        }
+        .onChange(of: planFingerprint) { _, _ in
+            guard !RuntimeEnvironment.isRunningUnitTests else { return }
+            guard appState.onboardingComplete, accountManager.state != .signedOut else { return }
+            rebuildToday()
+        }
+        .onChange(of: calendarManager.revision) { _, _ in
+            guard !RuntimeEnvironment.isRunningUnitTests else { return }
+            guard appState.onboardingComplete, accountManager.state != .signedOut else { return }
+            rebuildToday()
         }
     }
 
     /// Re-runs setup when the account changes or onboarding finishes.
     private var taskKey: String {
         "\(accountManager.state)-\(appState.onboardingComplete)"
+    }
+
+    /// Fields that change the day's plan. Accent/tone changes must not
+    /// spend Spoonacular quota on a rebuild.
+    private var planFingerprint: String {
+        let profile = appState.profile
+        return [
+            profile.goalDirection.rawValue,
+            profile.deficitIntensity.rawValue,
+            String(Int(profile.currentWeightLbs)),
+            String(Int(profile.goalWeightLbs)),
+            profile.activityLevel.rawValue,
+            profile.dietaryPattern.rawValue,
+            String(profile.mealsPerDay),
+            profile.fitnessGoals.map(\.rawValue).sorted().joined(),
+            RecipeCache.signature(calories: 0, profile: profile)
+        ].joined(separator: "/")
+    }
+
+    private func rebuildToday() {
+        let busy = calendarManager.busyBlocks(for: Date())
+        let tasks = calendarManager.todayTasks
+        appState.regenerateToday(calendarBusyBlocks: busy, tasks: tasks)
+        publishSchedule()
+        Task {
+            let macros = MetabolicEngine.dailyTargets(for: appState.profile)
+            if let live = await MealEngine.liveMealsForToday(macros: macros, profile: appState.profile) {
+                appState.regenerateToday(calendarBusyBlocks: busy, tasks: tasks, liveMeals: live)
+                publishSchedule()
+            }
+        }
+    }
+
+    /// Notifications + the Lock In calendar + the workout shield. The generated
+    /// schedule is the source of truth; these just project it outward.
+    private func publishSchedule() {
+        guard let schedule = appState.todaySchedule else { return }
+        NotificationManager.shared.scheduleDay(
+            schedule,
+            tone: appState.profile.toneIntensity,
+            streak: appState.streak
+        )
+        calendarManager.sync(schedule)
+        scheduleWorkoutLockInBlock()
     }
 
     /// Registers today's workout window as a guarded lock-in block, if Screen
