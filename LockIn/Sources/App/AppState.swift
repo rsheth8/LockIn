@@ -104,7 +104,7 @@ final class AppState: ObservableObject {
         guard let updated = await WeightSyncEngine.sync(profile: profile, healthKit: healthKit) else { return }
         await MainActor.run {
             self.profile = updated
-            store.saveProfile(updated)
+            persistProfile(updated)
         }
     }
 
@@ -138,13 +138,13 @@ final class AppState: ObservableObject {
         }
 
         self.todaySchedule = schedule
-        store.saveSchedule(schedule)
+        persistSchedule(schedule)
         recordToday(schedule: schedule)
     }
 
     func saveProfile(_ profile: UserProfile) {
         self.profile = profile
-        store.saveProfile(profile)
+        persistProfile(profile)
         onboardingComplete = true
         syncToneToMonitorExtension()
         pushToCloud()
@@ -181,7 +181,7 @@ final class AppState: ObservableObject {
     /// entirely is still a miss, via Skip.
     func log(_ meal: LoggedMeal) {
         loggedMeals.append(meal)
-        store.saveLoggedMeals(loggedMeals)
+        persistLoggedMeals()
 
         if let eventID = meal.replacedEventID,
            let event = todaySchedule?.events.first(where: { $0.id == eventID }) {
@@ -191,7 +191,47 @@ final class AppState: ObservableObject {
 
     func deleteLoggedMeal(_ meal: LoggedMeal) {
         loggedMeals.removeAll { $0.id == meal.id }
+        persistLoggedMeals()
+    }
+
+    // MARK: - Persistence
+    //
+    // Every mutation writes through these rather than touching `store`
+    // directly. Demo mode is a throwaway in-memory session shown from the
+    // sign-in screen, and it must not leave anything behind in the real
+    // store — not a check-in, not a streak bump, not a logged meal.
+
+    private var shouldPersist: Bool {
+#if DEBUG
+        return !demoActive
+#else
+        return true
+#endif
+    }
+
+    private func persistLoggedMeals() {
+        guard shouldPersist else { return }
         store.saveLoggedMeals(loggedMeals)
+    }
+
+    private func persistProfile(_ profile: UserProfile) {
+        guard shouldPersist else { return }
+        store.saveProfile(profile)
+    }
+
+    private func persistSchedule(_ schedule: DaySchedule) {
+        guard shouldPersist else { return }
+        store.saveSchedule(schedule)
+    }
+
+    private func persistDayRecords() {
+        guard shouldPersist else { return }
+        store.saveDayRecords(dayRecords)
+    }
+
+    private func persistStreak() {
+        guard shouldPersist else { return }
+        store.saveStreak(streak)
     }
 
     // MARK: - Screen Time distraction events
@@ -214,8 +254,8 @@ final class AppState: ObservableObject {
                 dayRecords[index].distractionEvents += 1
             }
         }
-        store.saveStreak(streak)
-        store.saveDayRecords(dayRecords)
+        persistStreak()
+        persistDayRecords()
     }
 
     /// The monitor extension can't read the main app's UserDefaults, so the
@@ -240,7 +280,7 @@ final class AppState: ObservableObject {
             streak.currentStreakDays = 0
             streak.lastMissedEvent = event.title
             streak.missedCheckInsThisWeek += 1
-            store.saveStreak(streak)
+            persistStreak()
         }
     }
 
@@ -249,7 +289,7 @@ final class AppState: ObservableObject {
               let index = schedule.events.firstIndex(where: { $0.id == event.id }) else { return }
         schedule.events[index].status = status
         todaySchedule = schedule
-        store.saveSchedule(schedule)
+        persistSchedule(schedule)
         recordToday(schedule: schedule)
         evaluateStreak(schedule: schedule)
     }
@@ -275,7 +315,7 @@ final class AppState: ObservableObject {
         } else {
             dayRecords.append(record)
         }
-        store.saveDayRecords(dayRecords)
+        persistDayRecords()
     }
 
     /// A day counts toward the streak once every critical event in it is confirmed
@@ -293,7 +333,7 @@ final class AppState: ObservableObject {
         streak.currentStreakDays += 1
         streak.longestStreakDays = max(streak.longestStreakDays, streak.currentStreakDays)
         streak.lastCountedDayKey = key
-        store.saveStreak(streak)
+        persistStreak()
     }
 
 #if DEBUG
@@ -307,14 +347,14 @@ final class AppState: ObservableObject {
             profile.currentWeightLbs = latest.weightLbs
         }
         store.saveDayRecords(seeded)
-        store.saveProfile(profile)
+        persistProfile(profile)
     }
 
     func clearDemoHistory() {
         dayRecords = []
         profile.weightHistory = []
         store.saveDayRecords([])
-        store.saveProfile(profile)
+        persistProfile(profile)
     }
 
     /// Entry point for "Watch the demo" on the sign-in screen. Builds a
@@ -332,6 +372,7 @@ final class AppState: ObservableObject {
         profile = demoProfile
         dayRecords = seeded
         streak = DemoMode.streak
+        loggedMeals = DemoMode.loggedMeals
         todaySchedule = DemoMode.todaySchedule(profile: demoProfile)
         onboardingComplete = true
         demoTour.stepIndex = 0
@@ -347,6 +388,7 @@ final class AppState: ObservableObject {
         onboardingComplete = store.loadProfile() != nil
         streak = store.loadStreak() ?? StreakStatus()
         dayRecords = store.loadDayRecords()
+        loggedMeals = store.loadLoggedMeals()
         todaySchedule = store.loadSchedule()
     }
 #endif

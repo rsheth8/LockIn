@@ -6,7 +6,7 @@ import Accelerate
 /// Identifies food in a photo, entirely on-device.
 ///
 /// Uses Apple's MobileCLIP (s0) image encoder against a bundled table of
-/// precomputed text embeddings for ~700 dishes spanning every major cuisine.
+/// precomputed text embeddings for ~720 foods spanning every major cuisine.
 /// Because CLIP matches images against *arbitrary text* rather than a fixed
 /// set of trained classes, coverage is bounded by the vocabulary we ship — not
 /// by what the model was trained to classify — so adding a cuisine is a data
@@ -33,8 +33,8 @@ actor FoodVisionClassifier {
     }
 
     /// Below this, the best food match is weak enough that showing it as a
-    /// suggestion does more harm than good. Calibrated against a 21-photo
-    /// spread where correct matches scored 0.26–0.35 and the non-food decoys
+    /// suggestion does more harm than good. Calibrated against a 95-photo
+    /// spread where correct matches scored 0.26–0.37 and the non-food decoys
     /// topped out at 0.19.
     private static let minimumUsableScore: Float = 0.22
 

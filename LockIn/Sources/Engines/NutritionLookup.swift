@@ -2,21 +2,29 @@ import Foundation
 
 /// Resolves a food name to macros, cheapest source first.
 ///
-/// The ladder is ordered by cost and reliability, not preference:
+/// The local database always leads — it's instant, offline, free and
+/// hand-checked. After that the order depends on *what kind of food it is*,
+/// because the two online sources are good at opposite things:
 ///
-/// 1. **Local database** — instant, offline, free, hand-checked. Only covers
-///    the app's staples, but when it hits it's the best answer available.
-/// 2. **Open Food Facts** — free, keyless, global, no practical rate limit.
-///    Strong on packaged products, thin on home-cooked dishes.
-/// 3. **Spoonacular `guessNutrition`** — the only source that handles cooked
-///    dishes by name, but it costs quota, so it's last.
+/// - **Open Food Facts** is a label database: excellent for ingredients and
+///   packaged goods ("greek yogurt", "almonds"), poor for cooked dishes, where
+///   it returns whatever supermarket ready-meal shares the name. Free, keyless,
+///   no practical rate limit.
+/// - **Spoonacular `guessNutrition`** estimates from a dish name, which is
+///   exactly the cooked-dish case. Costs quota, so it's never tried first for
+///   something a label database would answer well.
 ///
-/// Every step degrades gracefully: if all three miss, the caller is expected
-/// to fall back to manual entry rather than logging a zeroed-out meal.
+/// Stress testing is what forced this split: routing everything to Open Food
+/// Facts first returned "céréales et légumes, façon pad thaï, bio" at 122
+/// kcal/100g for a plate of pad thai — a confidently wrong number.
+///
+/// Every step degrades gracefully. If all sources miss, the caller falls back
+/// to manual entry rather than logging a zeroed-out meal.
 enum NutritionLookup {
 
     static func facts(
         for name: String,
+        isDish: Bool = true,
         localDatabase: [FoodItem] = FoodDatabase.all,
         openFoodFacts: OpenFoodFactsClient = .shared,
         spoonacular: SpoonacularClient = .shared
@@ -28,14 +36,19 @@ enum NutritionLookup {
         // Network sources are best-effort: a lookup failure should leave the
         // user on manual entry, never surface as an error they have to dismiss
         // before they can log their lunch.
-        if let remote = try? await openFoodFacts.nutrition(for: name), remote.reference.calories > 0 {
-            return remote
+        let labelLookup: () async -> NutritionFacts? = {
+            guard let facts = try? await openFoodFacts.nutrition(for: name),
+                  facts.reference.calories > 0 else { return nil }
+            return facts
+        }
+        let dishEstimate: () async -> NutritionFacts? = {
+            try? await spoonacular.guessNutrition(title: name)
         }
 
-        if let guess = try? await spoonacular.guessNutrition(title: name) {
-            return guess
+        let ordered = isDish ? [dishEstimate, labelLookup] : [labelLookup, dishEstimate]
+        for attempt in ordered {
+            if let facts = await attempt() { return facts }
         }
-
         return nil
     }
 

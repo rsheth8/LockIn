@@ -10,6 +10,7 @@ struct LogMealView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accent) private var accent
     @State private var showingCamera = false
+    @State private var showingLibrary = false
 
     /// Called with the finished entry so the caller can commit it to AppState.
     let onSave: (LoggedMeal) -> Void
@@ -50,6 +51,10 @@ struct LogMealView: View {
             }
             .fullScreenCover(isPresented: $showingCamera) {
                 CameraCaptureView { image in model.identify(from: image) }
+                    .ignoresSafeArea()
+            }
+            .sheet(isPresented: $showingLibrary) {
+                PhotoLibraryPicker { image in model.identify(from: image) }
                     .ignoresSafeArea()
             }
         }
@@ -106,23 +111,48 @@ struct LogMealView: View {
 
     private var chooseSection: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // Hidden where there's no camera — the simulator, or a device
+            // where it's restricted. Presenting the camera picker there gives
+            // a dead black sheet rather than a useful failure.
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button {
+                    Haptics.tap()
+                    showingCamera = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "camera.fill").font(.system(size: 15, weight: .semibold))
+                        Text("Take a photo").font(.system(size: 16, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(Theme.ink)
+                    .foregroundStyle(Theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+
             Button {
                 Haptics.tap()
-                showingCamera = true
+                showingLibrary = true
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "camera.fill").font(.system(size: 15, weight: .semibold))
-                    Text("Take a photo").font(.system(size: 16, weight: .semibold))
+                    Image(systemName: "photo.on.rectangle").font(.system(size: 15, weight: .semibold))
+                    Text("Upload a photo").font(.system(size: 16, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
-                .background(Theme.ink)
-                .foregroundStyle(Theme.surface)
+                .background(Theme.surface)
+                .foregroundStyle(Theme.ink)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Theme.rule, lineWidth: 1)
+                )
             }
             .buttonStyle(.plain)
 
-            Text("Recognised on this device against ~700 dishes from every major cuisine. The photo is never saved or uploaded.")
+            Text("Recognised on this device against ~720 foods from every major cuisine. The photo is never saved or uploaded, and picking one doesn't give the app access to your library.")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -317,6 +347,18 @@ struct LogMealView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
+
+                // Label databases only cover ingredients and packaged goods
+                // well, so without the (free) Spoonacular key most cooked
+                // dishes land here. Worth saying once, where it's relevant,
+                // rather than leaving it looking broken.
+                if Secrets.spoonacularKey == nil {
+                    Text("Cooked dishes need a Spoonacular key to estimate automatically — see Setup in the README. It's free.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
             }
 
             macroField("Calories", text: $model.manualCalories)

@@ -56,7 +56,9 @@ actor OpenFoodFactsClient {
         }
 
         let decoded = try JSONDecoder().decode(SearchResponse.self, from: data)
-        guard let best = decoded.products.first(where: { $0.isUsable }) else {
+        guard let best = decoded.products.first(where: {
+            $0.isUsable && Self.isPlausibleMatch(productName: $0.product_name, query: query)
+        }) else {
             return nil
         }
         return NutritionFacts(
@@ -65,6 +67,37 @@ actor OpenFoodFactsClient {
             basis: .per100g,
             source: .openFoodFacts
         )
+    }
+
+    /// Rejects results that merely *mention* the query inside an unrelated
+    /// product name.
+    ///
+    /// Open Food Facts matches loosely, so searching "pad thai" surfaces
+    /// things like "céréales et légumes, façon pad thaï, bio" — a packaged
+    /// side dish whose 122 kcal/100g has nothing to do with a plate of pad
+    /// thai. Accepting it would log a confidently wrong number.
+    ///
+    /// The test is directional: most of the *product's* words should be words
+    /// the user asked for. A good match ("Chicken Shawarma" for "chicken
+    /// shawarma") is almost entirely query words; a ready-meal that happens to
+    /// share a word is mostly other words.
+    static func isPlausibleMatch(productName: String?, query: String) -> Bool {
+        guard let productName, !productName.isEmpty else { return false }
+
+        let queryTokens = Set(tokens(in: query))
+        let productTokens = tokens(in: productName)
+        guard !queryTokens.isEmpty, !productTokens.isEmpty else { return false }
+
+        let overlap = productTokens.filter { queryTokens.contains($0) }.count
+        return Double(overlap) / Double(productTokens.count) >= 0.5
+    }
+
+    /// Lowercased word tokens with diacritics folded, so "thaï" matches "thai".
+    private static func tokens(in value: String) -> [String] {
+        value
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count > 2 }
     }
 
     // MARK: - Wire types

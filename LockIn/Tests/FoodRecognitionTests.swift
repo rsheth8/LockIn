@@ -17,6 +17,28 @@ final class FoodVocabularyTests: XCTestCase {
         XCTAssertGreaterThan(vocabulary.names.count, vocabulary.foodCount,
                              "non-food decoys must exist or the classifier can never abstain")
         XCTAssertEqual(Set(vocabulary.names).count, vocabulary.names.count, "names must be unique")
+        XCTAssertLessThan(vocabulary.dishCount, vocabulary.foodCount,
+                          "both dishes and ingredients must be represented")
+    }
+
+    /// The dish/ingredient split routes the nutrition lookup, so a
+    /// misclassification here sends a cooked dish to a label database.
+    func testDishesAndIngredientsAreDistinguished() throws {
+        let vocabulary = try FoodVocabulary.loadBundled()
+
+        for dish in ["chicken biryani", "pad thai", "shakshuka", "feijoada"] {
+            XCTAssertTrue(vocabulary.isDish(dish), "\(dish) should be treated as a dish")
+        }
+        for ingredient in ["greek yogurt", "almonds", "banana", "white rice"] {
+            XCTAssertFalse(vocabulary.isDish(ingredient), "\(ingredient) should be treated as an ingredient")
+        }
+    }
+
+    /// Free text the user typed isn't in the vocabulary; treating it as a dish
+    /// is the right default when someone is logging a meal.
+    func testUnknownNamesDefaultToDish() throws {
+        let vocabulary = try FoodVocabulary.loadBundled()
+        XCTAssertTrue(vocabulary.isDish("grandma's mystery casserole"))
     }
 
     /// The whole cultural-breadth claim rests on the vocabulary actually
@@ -59,7 +81,7 @@ final class FoodVocabularyTests: XCTestCase {
             0, 0, 1    // "a person" (non-food)
         ]
         return FoodVocabulary(names: ["rice", "curry", "a person"],
-                              foodCount: 2, dimensions: 3, embeddings: embeddings)
+                              foodCount: 2, dishCount: 1, dimensions: 3, embeddings: embeddings)
     }
 
     func testBestMatchesRanksBySimilarity() {
@@ -222,13 +244,13 @@ final class OpenFoodFactsClientTests: XCTestCase {
     func testSkipsEntriesWithNoNutritionAndFallsThrough() async throws {
         respond("""
         {"products":[
-          {"product_name":"Mystery Item","nutriments":{}},
-          {"product_name":"Real Item","nutriments":{
-            "energy-kcal_100g":200,"proteins_100g":8,"fat_100g":5,"carbohydrates_100g":30}}]}
+          {"product_name":"Greek Yogurt","nutriments":{}},
+          {"product_name":"Greek Yogurt Plain","nutriments":{
+            "energy-kcal_100g":73,"proteins_100g":10,"fat_100g":2,"carbohydrates_100g":4}}]}
         """)
 
-        let facts = try await client.nutrition(for: "something")
-        XCTAssertEqual(facts?.name, "Real Item", "the empty entry should be skipped, not returned")
+        let facts = try await client.nutrition(for: "greek yogurt plain")
+        XCTAssertEqual(facts?.name, "Greek Yogurt Plain", "the empty entry should be skipped, not returned")
     }
 
     func testRejectsEntriesWithCaloriesButNoMacros() async throws {
@@ -238,6 +260,31 @@ final class OpenFoodFactsClientTests: XCTestCase {
 
         let facts = try await client.nutrition(for: "incomplete")
         XCTAssertNil(facts)
+    }
+
+    /// The bug stress testing caught: searching "pad thai" returned a French
+    /// packaged side dish whose macros have nothing to do with the meal.
+    func testRejectsProductsThatOnlyMentionTheQuery() async throws {
+        respond("""
+        {"products":[{"product_name":"céréales et légumes, façon pad thaï, bio","nutriments":{
+          "energy-kcal_100g":122,"proteins_100g":4,"fat_100g":2,"carbohydrates_100g":21}}]}
+        """)
+
+        let facts = try await client.nutrition(for: "pad thai")
+        XCTAssertNil(facts, "a ready-meal that merely mentions the dish is not a usable match")
+    }
+
+    func testAcceptsCloseProductNames() {
+        XCTAssertTrue(OpenFoodFactsClient.isPlausibleMatch(productName: "Chicken Shawarma", query: "chicken shawarma"))
+        XCTAssertTrue(OpenFoodFactsClient.isPlausibleMatch(productName: "Greek Yogurt", query: "greek yogurt"))
+        // Diacritics must fold, or "thaï" would never match "thai".
+        XCTAssertTrue(OpenFoodFactsClient.isPlausibleMatch(productName: "Pad Thaï", query: "pad thai"))
+    }
+
+    func testRejectsUnrelatedAndEmptyProductNames() {
+        XCTAssertFalse(OpenFoodFactsClient.isPlausibleMatch(productName: "Organic Breakfast Cereal Bar", query: "pad thai"))
+        XCTAssertFalse(OpenFoodFactsClient.isPlausibleMatch(productName: nil, query: "pad thai"))
+        XCTAssertFalse(OpenFoodFactsClient.isPlausibleMatch(productName: "", query: "pad thai"))
     }
 
     func testEmptyResultsReturnNil() async throws {

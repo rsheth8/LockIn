@@ -14,6 +14,14 @@ struct FoodVocabulary {
     /// Entries before this index are foods; the rest are non-food classes used
     /// only to let the classifier abstain.
     let foodCount: Int
+    /// Entries before this index are composed dishes ("chicken biryani"); the
+    /// rest, up to `foodCount`, are single ingredients ("greek yogurt").
+    ///
+    /// This split decides which nutrition source to try first. Label databases
+    /// are built around ingredients and packaged goods, so they answer
+    /// "greek yogurt" well and "pad thai" badly — for the latter they return
+    /// whatever supermarket ready-meal happens to share the name.
+    let dishCount: Int
     let dimensions: Int
     /// Row-major, `names.count` rows of `dimensions` floats, L2-normalised.
     /// Internal rather than private so tests can build a small synthetic
@@ -65,13 +73,23 @@ struct FoodVocabulary {
         }
 
         return FoodVocabulary(names: meta.names, foodCount: meta.foodCount,
-                              dimensions: meta.dimensions, embeddings: floats)
+                              dishCount: meta.dishCount, dimensions: meta.dimensions,
+                              embeddings: floats)
     }
 
     private struct Metadata: Decodable {
         let names: [String]
         let foodCount: Int
+        let dishCount: Int
         let dimensions: Int
+    }
+
+    /// True when the name refers to a composed dish rather than a single
+    /// ingredient. Unknown names (free text the user typed) are treated as
+    /// dishes, since that's what someone types when logging a meal.
+    func isDish(_ name: String) -> Bool {
+        guard let index = names.firstIndex(of: name.lowercased()) else { return true }
+        return index < dishCount
     }
 
     // MARK: - Matching

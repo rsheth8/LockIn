@@ -97,7 +97,10 @@ final class LogMealViewModel: ObservableObject {
         errorMessage = nil
 
         Task {
-            if let facts = await NutritionLookup.facts(for: name) {
+            // Whether this is a composed dish or a single ingredient decides
+            // which nutrition source is tried first — see NutritionLookup.
+            let isDish = await loadVocabulary()?.isDish(name) ?? true
+            if let facts = await NutritionLookup.facts(for: name, isDish: isDish) {
                 amount = facts.basis.defaultAmount
                 step = .portion(facts)
             } else {

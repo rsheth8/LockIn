@@ -45,7 +45,7 @@ your Apple Developer Team ID and re-run `xcodegen generate`.
 - **Photo meal logging** (`FoodVisionClassifier`, `FoodVocabulary`,
   `NutritionLookup`) — snap a photo of anything you're eating and get macros.
   Recognition runs fully on-device via Apple's MobileCLIP against a bundled
-  vocabulary of ~700 dishes spanning every major cuisine. See
+  vocabulary of ~720 foods spanning every major cuisine. See
   [Photo meal logging](#photo-meal-logging) below.
 - **`CalendarManager`** — EventKit read access for real busy blocks.
 - **`HealthKitManager`** — weight/workout read+write, sleep/active-energy read.
@@ -95,7 +95,7 @@ cd LockIn && xcodebuild -project LockIn.xcodeproj -scheme LockIn \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-164 tests covering the metabolic engine (BMR pinned to hand-computed
+177 tests covering the metabolic engine (BMR pinned to hand-computed
 Mifflin-St Jeor values, safety floors swept across ~300 body/sex combinations,
 macros proven never negative), meal assembly and macro fitting, sleep and
 schedule construction, streak/adherence logic, accountability copy, cache
@@ -142,15 +142,36 @@ compiled to `.mlmodelc` by Xcode at build time). CLIP matches an image against
 bounded by the vocabulary we ship — not by what the model was trained to
 classify. Adding a cuisine is a data change, never a retrain.
 
-The ~700 dish names and their text embeddings live in `FoodVocabulary.json` /
+The ~720 names and their text embeddings live in `FoodVocabulary.json` /
 `FoodVocabulary.bin` (~700 KB of float16). Those are precomputed at build time
 by `LockIn/Tools/` — the app never runs a text encoder, which is what keeps the
 bundle at 22 MB instead of ~107 MB.
 
-Measured on 21 real dish photos spanning South Asian, East/Southeast Asian,
-Middle Eastern, African, European and Latin American cuisines:
-**81% top-1, 95% top-5**. The UI shows the top 5 and asks you to confirm, so
-top-5 is the number that matters.
+Measured on **95 real dish photos** across eight regions (`Tools/eval_food_recognition.py`):
+
+| region | n | top-1 | top-5 |
+|---|---|---|---|
+| American | 8 | 100% | 100% |
+| European | 15 | 93% | 93% |
+| East Asian | 13 | 92% | 100% |
+| Latin American | 11 | 91% | 100% |
+| South Asian | 15 | 87% | 100% |
+| Middle Eastern | 10 | 80% | 90% |
+| Southeast Asian | 13 | 77% | 92% |
+| African | 10 | 50% | 70% |
+| **overall** | **95** | **84%** | **94%** |
+
+The UI shows the top 5 and asks you to confirm, so top-5 is the number that
+matters in practice.
+
+**African coverage is the known weak spot** and it's a limit of the model, not
+the pipeline: zero-shot CLIP was trained on web captions that underrepresent
+West and East African food. It reads fufu as "rasgulla" (white spheres) and
+egusi soup as "sunflower seeds" (it is a melon-seed stew). Adding descriptive
+aliases — "ethiopian chicken stew" alongside "doro wat" — lifted the region
+from 40%/60% to 50%/70%, but no amount of vocabulary fixes a gap in what the
+model was trained on. Those dishes are all still in the vocabulary and findable
+by search; the photo just may not rank them.
 
 The vocabulary also contains non-food entries ("a person", "an empty plate").
 They're never offered as candidates — they exist so that if a photo isn't of
@@ -158,18 +179,30 @@ food, the classifier returns *nothing* rather than a confident wrong guess.
 
 ### Macros: free-first, degrading gracefully
 
-`NutritionLookup` walks a ladder, cheapest first:
+The local `FoodDatabase` always leads — instant, offline, free, hand-checked.
+After that the order depends on **what kind of food it is**, because the two
+online sources are good at opposite things:
 
-1. **Local `FoodDatabase`** — instant, offline, free, hand-checked.
-2. **Open Food Facts** — free, no API key, no practical rate limit, global.
-   Strong on packaged products, thin on home-cooked dishes.
-3. **Spoonacular `guessNutrition`** — the only source that handles cooked
-   dishes by name. Costs quota, so it's last.
-4. **Manual entry** — if all three miss, you type the numbers rather than the
-   app logging a zeroed-out meal.
+- **Ingredients** ("greek yogurt", "almonds") → Open Food Facts first. It's a
+  label database: free, keyless, global, no practical rate limit.
+- **Dishes** ("chicken biryani", "pad thai") → Spoonacular `guessNutrition`
+  first, which estimates from a dish name. Costs quota, so it's never tried
+  first for something a label database answers well.
 
-In practice this is $0: the first two cover most cases and neither costs
-anything.
+If both miss you get **manual entry** rather than a zeroed-out meal.
+
+Stress testing is what forced this split. Routing everything to Open Food Facts
+first returned *"céréales et légumes, façon pad thaï, bio"* — a French packaged
+side dish — at 122 kcal/100g for a plate of pad thai. Open Food Facts matches
+loosely, so a result now has to pass a plausibility check: most of the
+*product's* words must be words you actually asked for. "Chicken Shawarma" for
+"chicken shawarma" passes; a ready-meal that merely shares a word doesn't.
+
+**Consequence worth knowing:** with no Spoonacular key configured, cooked
+dishes now fall through to manual entry rather than returning a confidently
+wrong number. That's the honest trade, but it does mean the free Spoonacular
+key (see Setup above) is what makes dish lookup work smoothly. Ingredients and
+packaged foods work fully offline/free either way.
 
 ### What it deliberately does *not* do
 

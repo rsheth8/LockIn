@@ -18,7 +18,9 @@ import numpy as np
 import coremltools as ct
 from transformers import AutoTokenizer
 
-from food_vocabulary import FOOD_NAMES, NON_FOOD
+from food_vocabulary import (FOOD_NAMES, NON_FOOD, SOUTH_ASIAN, EAST_ASIAN,
+                             SOUTHEAST_ASIAN, MIDDLE_EASTERN_AND_AFRICAN,
+                             EUROPEAN, AMERICAS)
 
 # Prompt ensembling: averaging a few phrasings is standard CLIP practice and
 # measurably beats a single template, because it averages out quirks of any
@@ -88,9 +90,17 @@ def main():
     with open("FoodVocabulary.bin", "wb") as f:
         f.write(matrix.tobytes())
 
+    # Entries before dishCount are composed dishes; the rest are single
+    # ingredients. That split decides which nutrition source to try first —
+    # label databases are built around ingredients and packaged goods, while
+    # a cooked dish needs a source that estimates from the dish name.
+    dish_count = len(SOUTH_ASIAN + EAST_ASIAN + SOUTHEAST_ASIAN
+                     + MIDDLE_EASTERN_AND_AFRICAN + EUROPEAN + AMERICAS)
+
     meta = {
         "names": names,
         "foodCount": len(FOOD_NAMES),
+        "dishCount": dish_count,
         "dimensions": int(matrix.shape[1]),
         "model": "mobileclip_s0",
     }

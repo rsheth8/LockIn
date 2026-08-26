@@ -74,6 +74,11 @@ SOUTHEAST_ASIAN = [
     "roti canai", "bak kut teh", "chili crab", "beef rendang", "sambal",
     "adobo", "sinigang", "lechon", "pancit", "lumpia", "kare kare",
     "halo halo", "sisig", "amok curry", "lok lak", "khao pad",
+    # Descriptive aliases for dishes the first evaluation missed: som tam came
+    # back as "taiwanese beef noodle" (shredded papaya reads as noodles) and
+    # adobo as "ham".
+    "green papaya salad", "filipino adobo", "braised pork in soy sauce",
+    "thai papaya salad with peanuts",
 ]
 
 MIDDLE_EASTERN_AND_AFRICAN = [
@@ -90,6 +95,21 @@ MIDDLE_EASTERN_AND_AFRICAN = [
     "injera with wot", "doro wat", "shiro", "misir wot", "tibs",
     "jollof rice", "egusi soup", "fufu", "suya skewers", "moin moin",
     "bunny chow", "bobotie", "chakalaka", "koshari", "ful medames",
+    # African coverage is where zero-shot CLIP is measurably weakest — a first
+    # pass scored 40% top-1 here against 83% overall, missing fufu as
+    # "rasgulla" and egusi soup as "sunflower seeds". These add both more
+    # dishes and *descriptive* phrasings of the ones it fumbled, since CLIP
+    # was trained on web captions and often knows "ethiopian chicken stew"
+    # where it doesn't know "doro wat".
+    "ethiopian chicken stew", "ethiopian food platter", "ethiopian lentil stew",
+    "melon seed soup", "nigerian soup with fufu", "pounded yam", "eba",
+    "amala", "banku", "ugali", "waakye", "west african jollof rice",
+    "nigerian party rice", "okra soup", "ogbono soup", "pepper soup",
+    "akara", "puff puff", "kelewele", "nyama choma", "grilled goat meat",
+    "yassa chicken", "thieboudienne", "maafe peanut stew", "biltong",
+    "boerewors", "pap and stew", "samp and beans", "harissa paste",
+    "zaalouk", "shakshuka with bread", "koshari egyptian",
+    "south african curry bake", "cape malay curry",
 ]
 
 EUROPEAN = [
