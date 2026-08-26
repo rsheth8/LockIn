@@ -79,8 +79,15 @@ gitignored and never committed:
 cp LockIn/Sources/Resources/Secrets.example.plist LockIn/Sources/Resources/Secrets.plist
 ```
 
-- **Spoonacular** (`SpoonacularAPIKey`) — real recipes and macros. Without it
-  the app runs entirely on the built-in food database; nothing breaks.
+- **Spoonacular** (`SpoonacularAPIKey`) — real recipes, and macro estimates for
+  cooked dishes in photo meal logging. Without it the app still runs on the
+  built-in food database and Open Food Facts, but logging a *cooked dish* falls
+  through to manual entry (see [Photo meal logging](#photo-meal-logging)), and
+  the 10 `SpoonacularClientTests` skip-fail with `missingKey`.
+
+  The free tier is **150 points/day**. A cold app launch spends a few on the
+  weekly recipe pool, and each dish nutrition estimate costs 1 — so normal use
+  is comfortably inside it, but a day of heavy testing can run it down.
 - **Google** (`GoogleClientID`) — enables the Google sign-in button. Also paste
   your `REVERSED_CLIENT_ID` into `GOOGLE_REVERSED_CLIENT_ID` in `project.yml`
   so the OAuth redirect resolves. Without it the button stays hidden and Apple
@@ -199,10 +206,11 @@ loosely, so a result now has to pass a plausibility check: most of the
 "chicken shawarma" passes; a ready-meal that merely shares a word doesn't.
 
 **Consequence worth knowing:** with no Spoonacular key configured, cooked
-dishes now fall through to manual entry rather than returning a confidently
-wrong number. That's the honest trade, but it does mean the free Spoonacular
-key (see Setup above) is what makes dish lookup work smoothly. Ingredients and
-packaged foods work fully offline/free either way.
+dishes fall through to manual entry rather than returning a confidently wrong
+number. That's the honest trade, and it means the free Spoonacular key (see
+Setup above) is what makes dish lookup work smoothly — with it, a pad thai
+photo resolves to 500 kcal / P23 F21 C57 per serving. Ingredients and packaged
+foods work fully offline/free either way.
 
 ### What it deliberately does *not* do
 
