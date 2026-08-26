@@ -12,6 +12,8 @@ struct TodayView: View {
     /// Non-nil while the log sheet is up. Carries the event being swapped, or
     /// `.adHoc` for the always-available entry point.
     @State private var logTarget: LogTarget?
+    /// Non-nil while an already-logged meal is being corrected.
+    @State private var editingMeal: LoggedMeal?
 
     /// Identifiable wrapper so `.sheet(item:)` can drive both entry points
     /// through one presentation.
@@ -61,6 +63,13 @@ struct TodayView: View {
             LogMealView(replacingEvent: target.event) { meal in
                 withAnimation(.snappy) { appState.log(meal) }
             }
+        }
+        .sheet(item: $editingMeal) { meal in
+            EditLoggedMealView(
+                meal: meal,
+                onSave: { updated in withAnimation(.snappy) { appState.updateLoggedMeal(updated) } },
+                onDelete: { old in withAnimation(.snappy) { appState.deleteLoggedMeal(old) } }
+            )
         }
     }
 
@@ -135,7 +144,16 @@ struct TodayView: View {
                 }
                 .padding(.vertical, 8)
                 .contentShape(Rectangle())
+                // Tap to correct. A number you can't fix is worse than no
+                // number, so this is a plain tap rather than a buried menu item.
+                .onTapGesture {
+                    Haptics.tap()
+                    editingMeal = meal
+                }
                 .contextMenu {
+                    Button("Edit", systemImage: "slider.horizontal.3") {
+                        editingMeal = meal
+                    }
                     Button("Remove", systemImage: "trash", role: .destructive) {
                         withAnimation(.snappy) { appState.deleteLoggedMeal(meal) }
                     }

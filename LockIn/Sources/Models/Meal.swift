@@ -9,13 +9,33 @@ struct FoodItem: Codable, Equatable, Identifiable {
     let per100g: MacroTargetsLite
     let prepAheadMinutes: Int?   // if non-nil, needs prep this many minutes before the meal (soak/marinate/cook)
     let prepInstructions: String?
+    /// What one realistic helping weighs, for foods where the generic 200 g
+    /// default would be absurd.
+    ///
+    /// Only set for concentrated items — a scoop of whey, a spoon of peanut
+    /// butter, a glug of oil. Logging those at 200 g isn't a rounding error,
+    /// it's seven scoops and 760 kcal instead of 114. Left nil for anything
+    /// you'd genuinely eat a plateful of.
+    let typicalServingGrams: Double?
+    /// How that serving is described on the portion picker ("1 scoop").
+    let typicalServingLabel: String?
 
-    init(id: UUID = UUID(), name: String, per100g: MacroTargetsLite, prepAheadMinutes: Int? = nil, prepInstructions: String? = nil) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        per100g: MacroTargetsLite,
+        prepAheadMinutes: Int? = nil,
+        prepInstructions: String? = nil,
+        typicalServingGrams: Double? = nil,
+        typicalServingLabel: String? = nil
+    ) {
         self.id = id
         self.name = name
         self.per100g = per100g
         self.prepAheadMinutes = prepAheadMinutes
         self.prepInstructions = prepInstructions
+        self.typicalServingGrams = typicalServingGrams
+        self.typicalServingLabel = typicalServingLabel
     }
 }
 

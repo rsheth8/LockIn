@@ -69,6 +69,54 @@ actor OpenFoodFactsClient {
         )
     }
 
+    /// Exact product for a scanned barcode.
+    ///
+    /// This is the highest-confidence lookup the app has and the reason
+    /// scanning is worth the camera: a barcode identifies one specific
+    /// manufactured product, so there's no name matching, no plausibility
+    /// gate, and no estimate. The Costco protein bar in the cupboard is that
+    /// exact bar, with the manufacturer's own numbers.
+    ///
+    /// Returns nil for an unknown code — Open Food Facts is crowd-sourced and
+    /// answers `status: 0` for products nobody has added yet, which is a normal
+    /// outcome rather than an error.
+    func product(barcode: String) async throws -> NutritionFacts? {
+        let digits = barcode.filter(\.isNumber)
+        guard digits.count >= 8 else { return nil }
+
+        var components = URLComponents(string: "\(host)/api/v2/product/\(digits).json")!
+        components.queryItems = [
+            .init(name: "fields", value: "product_name,brands,nutriments,serving_size,serving_quantity")
+        ]
+
+        var request = URLRequest(url: components.url!)
+        request.setValue("LockIn/1.0 (iOS; personal nutrition tracking)", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 12
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ClientError.badResponse(status: -1)
+        }
+        // A code nobody has catalogued comes back 404, which isn't a failure
+        // worth surfacing — the caller falls through to label scanning.
+        guard http.statusCode != 404 else { return nil }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ClientError.badResponse(status: http.statusCode)
+        }
+
+        let decoded = try JSONDecoder().decode(ProductResponse.self, from: data)
+        guard decoded.status == 1, let product = decoded.product, product.isUsable else { return nil }
+
+        return NutritionFacts(
+            name: product.displayName ?? "Scanned product",
+            reference: product.per100g,
+            basis: .per100g,
+            source: .barcode,
+            servingGrams: product.servingGrams,
+            servingLabel: product.serving_size
+        )
+    }
+
     /// Rejects results that merely *mention* the query inside an unrelated
     /// product name.
     ///
@@ -106,9 +154,59 @@ actor OpenFoodFactsClient {
         let products: [Product]
     }
 
+    /// The v2 single-product envelope. `status` is 1 for a hit, 0 for a code
+    /// that isn't in the database.
+    struct ProductResponse: Decodable {
+        let status: Int
+        let product: Product?
+    }
+
     struct Product: Decodable {
         let product_name: String?
+        let brands: String?
+        let serving_size: String?
+        let serving_quantity: Double?
         let nutriments: Nutriments?
+
+        private enum CodingKeys: String, CodingKey {
+            case product_name, brands, serving_size, serving_quantity, nutriments
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            product_name = try container.decodeIfPresent(String.self, forKey: .product_name)
+            brands = try container.decodeIfPresent(String.self, forKey: .brands)
+            serving_size = try container.decodeIfPresent(String.self, forKey: .serving_size)
+            // Open Food Facts sends this as a number on some records and a
+            // string on others.
+            if let value = try? container.decodeIfPresent(Double.self, forKey: .serving_quantity) {
+                serving_quantity = value
+            } else if let text = try? container.decodeIfPresent(String.self, forKey: .serving_quantity) {
+                serving_quantity = Double(text)
+            } else {
+                serving_quantity = nil
+            }
+            nutriments = try container.decodeIfPresent(Nutriments.self, forKey: .nutriments)
+        }
+
+        /// "Kirkland Signature Chewy Protein Bar" — the brand matters for a
+        /// scanned product in a way it doesn't for a search result, because
+        /// it's what's printed on the thing in the user's hand.
+        var displayName: String? {
+            let name = product_name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let name, !name.isEmpty else { return nil }
+            guard let brand = brands?.components(separatedBy: ",").first?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !brand.isEmpty,
+                !name.localizedCaseInsensitiveContains(brand) else { return name }
+            return "\(brand) \(name)"
+        }
+
+        /// A serving weight only when it's a sane one — some records carry a
+        /// stray 0 or an absurd value that would wreck the portion default.
+        var servingGrams: Double? {
+            guard let serving_quantity, serving_quantity >= 1, serving_quantity <= 1500 else { return nil }
+            return serving_quantity
+        }
 
         /// Open Food Facts stores nutriments as a flat bag of optional keys
         /// with inconsistent types (numbers sometimes arrive as strings), so

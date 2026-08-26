@@ -146,6 +146,60 @@ actor SpoonacularClient {
         )
     }
 
+    /// Nutrition for a named chain-restaurant menu item.
+    ///
+    /// Restaurant food is the gap neither other source covers: it has no
+    /// barcode, no nutrition label to photograph, and a dish-name estimate
+    /// ("burrito bowl") knows nothing about how that particular chain builds
+    /// one. Spoonacular carries published menu data for a few hundred US
+    /// chains, and those are the manufacturer's figures rather than a guess.
+    ///
+    /// Costs two quota points (search, then detail), so it's only reached for
+    /// free-text queries that look like a brand — see `NutritionLookup`.
+    ///
+    /// Note the coverage is genuinely partial: large chains like Chili's,
+    /// Moe's and Jersey Mike's are present, but Chipotle is not. A miss
+    /// returns nil and the caller falls through.
+    func menuItem(matching query: String) async throws -> NutritionFacts? {
+        guard let key = Secrets.spoonacularKey else { throw ClientError.missingKey }
+
+        var search = URLComponents(string: "\(host)/food/menuItems/search")!
+        search.queryItems = [
+            .init(name: "query", value: query),
+            .init(name: "number", value: "5"),
+            .init(name: "apiKey", value: key)
+        ]
+        let searchData = try await get(search.url!)
+        let results = try JSONDecoder().decode(SpoonacularMenuSearch.self, from: searchData)
+
+        // The search is fuzzy enough to return a soup for "burrito bowl", so
+        // the same directional token test the label lookup uses applies here.
+        guard let hit = results.menuItems.first(where: {
+            OpenFoodFactsClient.isPlausibleMatch(productName: $0.title, query: query)
+        }) ?? results.menuItems.first else { return nil }
+
+        let detailData = try await get(URL(string: "\(host)/food/menuItems/\(hit.id)?apiKey=\(key)")!)
+        let detail = try JSONDecoder().decode(SpoonacularMenuItem.self, from: detailData)
+        guard let nutrition = detail.nutrition, nutrition.calories > 0 else { return nil }
+
+        let name = [detail.restaurantChain, detail.title]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return NutritionFacts(
+            name: name.count == 2 && !name[1].localizedCaseInsensitiveContains(name[0])
+                ? "\(name[0]) \(name[1])"
+                : (name.last ?? query),
+            reference: MacroTargetsLite(
+                calories: nutrition.calories,
+                proteinG: nutrition.amount(of: "Protein"),
+                fatG: nutrition.amount(of: "Fat"),
+                carbG: nutrition.amount(of: "Carbohydrates")
+            ),
+            basis: .perServing,
+            source: .restaurantMenu
+        )
+    }
+
     /// Full detail including ingredient amounts, for the recipe sheet.
     func recipe(id: Int) async throws -> SpoonacularRecipeDetail {
         guard let key = Secrets.spoonacularKey else { throw ClientError.missingKey }
@@ -216,6 +270,58 @@ struct SpoonacularRecipe: Codable, Equatable, Identifiable {
 
     /// Anything that takes real time gets a prep-ahead reminder scheduled.
     var needsPrepAhead: Bool { (readyInMinutes ?? 0) > 30 }
+}
+
+/// Menu-item search envelope.
+struct SpoonacularMenuSearch: Codable, Equatable {
+    let menuItems: [Item]
+
+    struct Item: Codable, Equatable {
+        let id: Int
+        let title: String?
+        let restaurantChain: String?
+    }
+}
+
+/// One chain menu item with its published nutrition.
+struct SpoonacularMenuItem: Codable, Equatable {
+    let id: Int
+    let title: String?
+    let restaurantChain: String?
+    let nutrition: Nutrition?
+
+    /// Nutrition arrives as a flat list of named nutrients rather than fixed
+    /// keys, so macros are looked up by name.
+    struct Nutrition: Codable, Equatable {
+        let calories: Double
+        let nutrients: [Nutrient]
+
+        struct Nutrient: Codable, Equatable {
+            let name: String
+            let amount: Double
+            let unit: String?
+        }
+
+        private enum CodingKeys: String, CodingKey { case calories, nutrients }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if let number = try? container.decode(Double.self, forKey: .calories) {
+                calories = number
+            } else if let text = try? container.decode(String.self, forKey: .calories) {
+                calories = Double(text.filter { $0.isNumber || $0 == "." }) ?? 0
+            } else {
+                calories = 0
+            }
+            nutrients = (try? container.decode([Nutrient].self, forKey: .nutrients)) ?? []
+        }
+
+        /// Exact name match — "Fat" must not pick up "Saturated Fat", and
+        /// "Carbohydrates" must not pick up "Net Carbohydrates".
+        func amount(of nutrient: String) -> Double {
+            nutrients.first { $0.name.caseInsensitiveCompare(nutrient) == .orderedSame }?.amount ?? 0
+        }
+    }
 }
 
 /// Response from `guessNutrition` — each macro arrives as its own object with

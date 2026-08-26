@@ -11,6 +11,10 @@ struct LogMealView: View {
     @Environment(\.accent) private var accent
     @State private var showingCamera = false
     @State private var showingLibrary = false
+    @State private var showingBarcode = false
+    @State private var showingLabelCamera = false
+    @State private var showingLabelLibrary = false
+    @State private var choosingLabelSource = false
 
     /// Called with the finished entry so the caller can commit it to AppState.
     let onSave: (LoggedMeal) -> Void
@@ -28,6 +32,9 @@ struct LogMealView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         if let event = model.replacingEvent {
                             plannedInstead(event)
+                        }
+                        if model.isBuildingBowl {
+                            bowlSection
                         }
                         stepContent
                     }
@@ -57,6 +64,18 @@ struct LogMealView: View {
                 PhotoLibraryPicker { image in model.identify(from: image) }
                     .ignoresSafeArea()
             }
+            .fullScreenCover(isPresented: $showingBarcode) {
+                BarcodeScannerView { code in model.lookUpBarcode(code) }
+                    .ignoresSafeArea()
+            }
+            .fullScreenCover(isPresented: $showingLabelCamera) {
+                CameraCaptureView { image in model.readLabel(from: image) }
+                    .ignoresSafeArea()
+            }
+            .sheet(isPresented: $showingLabelLibrary) {
+                PhotoLibraryPicker { image in model.readLabel(from: image) }
+                    .ignoresSafeArea()
+            }
         }
     }
 
@@ -84,9 +103,91 @@ struct LogMealView: View {
             busy("Finding macros for \(name)…")
         case .portion(let facts):
             portionSection(facts)
-        case .manualEntry(let name):
-            manualSection(name)
+        case .manualEntry(let draft):
+            manualSection(draft)
         }
+    }
+
+    // MARK: - Bowl
+
+    /// What's been stacked so far, with a running total. Only appears once
+    /// there's more than one item in play, so a plain single-food log never
+    /// sees it.
+    private var bowlSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("In this meal").ledgerLabel()
+                Spacer()
+                let total = model.componentsTotal
+                Text("\(Int(total.calories.rounded())) kcal · P\(Int(total.proteinG.rounded()))")
+                    .font(Theme.mono(11, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+            }
+            .padding(.bottom, 8)
+
+            ForEach(model.components) { component in
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(component.name.capitalizedFirst)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Theme.ink)
+                        Text("\(component.portionDescription) · \(Int(component.macros.calories.rounded()))kcal · P\(Int(component.macros.proteinG.rounded())) F\(Int(component.macros.fatG.rounded())) C\(Int(component.macros.carbG.rounded()))")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        Haptics.tap()
+                        withAnimation(.snappy) { model.removeComponent(component) }
+                    } label: {
+                        Image(systemName: "minus.circle")
+                            .font(.system(size: 15))
+                            .foregroundStyle(Theme.inkFaint)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.vertical, 7)
+            }
+
+            LedgerRule().padding(.top, 4)
+
+            HStack(spacing: 8) {
+                Text("Call it").ledgerLabel()
+                TextField(model.bowlNamePlaceholder, text: $model.bowlName)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.ink)
+                    .submitLabel(.done)
+            }
+            .padding(.top, 12)
+        }
+        .padding(14)
+        .background(Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Theme.rule, lineWidth: 1)
+        )
+    }
+
+    /// Banks the item on screen and goes back for the next one.
+    private func addAnotherButton(_ label: String) -> some View {
+        Button {
+            Haptics.tap()
+            withAnimation(.snappy) { model.addCurrentToBowl() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill").font(.system(size: 14, weight: .semibold))
+                Text(label).font(.system(size: 15, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Theme.surfaceMuted)
+            .foregroundStyle(Theme.ink)
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!model.canAddToBowl)
+        .opacity(model.canAddToBowl ? 1 : 0.4)
     }
 
     /// What the plan had for this slot, when swapping a scheduled meal.
@@ -111,6 +212,13 @@ struct LogMealView: View {
 
     private var chooseSection: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if model.isBuildingBowl {
+                Text("Add the next item — or hit Save to log what's there.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             // Hidden where there's no camera — the simulator, or a device
             // where it's restricted. Presenting the camera picker there gives
             // a dead black sheet rather than a useful failure.
@@ -159,10 +267,79 @@ struct LogMealView: View {
 
             LedgerRule()
 
+            packagedSection
+
+            LedgerRule()
+
             Text("Or type it").ledgerLabel()
             searchField
             searchResultList
         }
+    }
+
+    /// Anything that came out of a box. Recognising a plate of food and
+    /// reading a package are genuinely different problems — a protein bar
+    /// looks like every other protein bar, but its barcode and its label both
+    /// say exactly what it is.
+    @ViewBuilder
+    private var packagedSection: some View {
+        Text("Packaged food").ledgerLabel()
+
+        // Barcode first: it's the most accurate lookup in the app and needs
+        // nothing from the user but pointing the camera.
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            secondaryButton("barcode.viewfinder", "Scan a barcode") {
+                showingBarcode = true
+            }
+        }
+
+        secondaryButton("doc.text.viewfinder", "Scan a nutrition label") {
+            // Both sources matter here in a way they don't for the barcode: a
+            // label is often already in the camera roll (a photo taken in the
+            // shop, a screenshot of a product page), and OCR treats a saved
+            // image exactly the same as a fresh capture.
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                choosingLabelSource = true
+            } else {
+                showingLabelLibrary = true
+            }
+        }
+        .confirmationDialog("Scan a nutrition label", isPresented: $choosingLabelSource, titleVisibility: .visible) {
+            Button("Take a photo") { showingLabelCamera = true }
+            Button("Choose an existing photo") { showingLabelLibrary = true }
+            Button("Cancel", role: .cancel) {}
+        }
+
+        Text("A barcode gets the manufacturer's own numbers from a database of millions of products — Costco, Trader Joe's, the lot. If it's not in there, the label on the box is read on this device with no internet at all.")
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.inkMuted)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func secondaryButton(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.tap()
+            action()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon).font(.system(size: 15, weight: .semibold))
+                Text(title).font(.system(size: 16, weight: .semibold))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.inkFaint)
+            }
+            .padding(.vertical, 15)
+            .padding(.horizontal, 14)
+            .background(Theme.surface)
+            .foregroundStyle(Theme.ink)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Theme.rule, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var searchField: some View {
@@ -282,9 +459,19 @@ struct LogMealView: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("How much").ledgerLabel()
+                HStack(alignment: .firstTextBaseline) {
+                    Text("How much").ledgerLabel()
+                    Spacer()
+                    // A scanned product knows its own serving, which is a far
+                    // better anchor than a round number of grams.
+                    if let serving = facts.servingLabel, facts.servingGrams != nil {
+                        Text("1 serving = \(serving)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                }
                 HStack(spacing: 8) {
-                    ForEach(facts.basis.quickAmounts, id: \.self) { value in
+                    ForEach(facts.quickAmounts, id: \.self) { value in
                         Button {
                             Haptics.tap()
                             model.amount = value
@@ -308,12 +495,8 @@ struct LogMealView: View {
                 // Photos can't measure a portion — no model can, from a 2D
                 // image — so the amount is always the user's call, defaulted
                 // rather than guessed.
-                Slider(
-                    value: $model.amount,
-                    in: facts.basis == .per100g ? 20...800 : 0.25...4,
-                    step: facts.basis == .per100g ? 10 : 0.25
-                )
-                .tint(accent.color)
+                Slider(value: $model.amount, in: facts.amountRange, step: facts.amountStep)
+                    .tint(accent.color)
 
                 Text(facts.portionDescription(for: model.amount))
                     .font(Theme.mono(15, weight: .semibold))
@@ -323,12 +506,36 @@ struct LogMealView: View {
             LedgerRule()
             macroReadout(facts.scaled(to: model.amount))
 
+            // No lookup is authoritative — the scoop of whey in a yogurt bowl
+            // is invisible to every source the app has. Correcting the numbers
+            // has to be one tap from where they're shown, or the log quietly
+            // records something the user knows is wrong.
+            Button {
+                Haptics.tap()
+                model.adjustMacros()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "slider.horizontal.3").font(.system(size: 12, weight: .semibold))
+                    Text("Adjust these numbers").font(.system(size: 14, weight: .medium))
+                }
+                .foregroundStyle(accent.color)
+            }
+            .buttonStyle(.plain)
+
             if facts.source.isEstimate {
                 Text("Estimated from the dish name — no photo can measure a portion, so treat this as a ballpark, not a weighed meal.")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            LedgerRule()
+
+            addAnotherButton(model.isBuildingBowl ? "Add this, then another" : "Add another item")
+            Text("Building a bowl? Add each part separately — yogurt, granola, a scoop of whey — and they're added up. One photo can only ever name one food.")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
 
             Button("Pick something else") { model.backToChoosing() }
                 .font(.system(size: 14, weight: .medium))
@@ -337,27 +544,49 @@ struct LogMealView: View {
         }
     }
 
-    private func manualSection(_ name: String) -> some View {
+    private func manualSection(_ draft: LogMealViewModel.ManualDraft) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(name)
+            VStack(alignment: .leading, spacing: 6) {
+                // Editable, because a label scan starts with no name at all and
+                // a photo guess is often nearly-but-not-quite right.
+                TextField("What was it?", text: $model.manualName)
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(Theme.ink)
-                Text("No macro data found for this one — enter what you know.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 6)
+                    .overlay(alignment: .bottom) { LedgerRule() }
 
-                // Label databases only cover ingredients and packaged goods
-                // well, so without the (free) Spoonacular key most cooked
-                // dishes land here. Worth saying once, where it's relevant,
-                // rather than leaving it looking broken.
-                if Secrets.spoonacularKey == nil {
-                    Text("Cooked dishes need a Spoonacular key to estimate automatically — see Setup in the README. It's free.")
-                        .font(.system(size: 11))
+                switch draft.reason {
+                case .correcting(let source):
+                    // Reached by choice, not by failure — say which numbers are
+                    // being overruled so the edit is an informed one.
+                    Text("\(draft.portionDescription) · was \(source.label.lowercased()). Change whatever's wrong; the rest stays.")
+                        .font(.system(size: 12))
                         .foregroundStyle(Theme.inkMuted)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 2)
+
+                case .scannedLabel(let found):
+                    Text("Read \(found) of 4 off the label\(draft.portionDescription == "1 serving" ? "" : " · per \(draft.portionDescription)"). Check them against the box before saving — OCR misreads glossy packaging.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                case .nothingFound:
+                    Text("No macro data found for this one — enter what you know.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    // Label databases only cover ingredients and packaged goods
+                    // well, so without the (free) Spoonacular key most cooked
+                    // dishes land here. Worth saying once, where it's relevant,
+                    // rather than leaving it looking broken.
+                    if Secrets.spoonacularKey == nil {
+                        Text("Cooked dishes need a Spoonacular key to estimate automatically — see Setup in the README. It's free.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.inkMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                    }
                 }
             }
 
@@ -366,10 +595,19 @@ struct LogMealView: View {
             macroField("Fat (g)", text: $model.manualFat)
             macroField("Carbs (g)", text: $model.manualCarbs)
 
-            Button("Pick something else") { model.backToChoosing() }
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(accent.color)
-                .buttonStyle(.plain)
+            addAnotherButton(model.isBuildingBowl ? "Add this, then another" : "Add another item")
+
+            if model.canCancelAdjusting {
+                Button("Back to the original numbers") { model.cancelAdjusting() }
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(accent.color)
+                    .buttonStyle(.plain)
+            } else {
+                Button("Pick something else") { model.backToChoosing() }
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(accent.color)
+                    .buttonStyle(.plain)
+            }
         }
     }
 

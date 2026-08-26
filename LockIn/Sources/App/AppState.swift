@@ -189,6 +189,17 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Replaces an already-logged meal in place.
+    ///
+    /// Editing rather than delete-and-relog keeps `loggedAt` and any
+    /// `replacedEventID` intact — correcting a number shouldn't move the meal
+    /// to the bottom of the day or un-swap the scheduled event it stood in for.
+    func updateLoggedMeal(_ meal: LoggedMeal) {
+        guard let index = loggedMeals.firstIndex(where: { $0.id == meal.id }) else { return }
+        loggedMeals[index] = meal
+        persistLoggedMeals()
+    }
+
     func deleteLoggedMeal(_ meal: LoggedMeal) {
         loggedMeals.removeAll { $0.id == meal.id }
         persistLoggedMeals()

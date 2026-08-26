@@ -25,6 +25,7 @@ enum NutritionLookup {
     static func facts(
         for name: String,
         isDish: Bool = true,
+        isFreeText: Bool = false,
         localDatabase: [FoodItem] = FoodDatabase.all,
         openFoodFacts: OpenFoodFactsClient = .shared,
         spoonacular: SpoonacularClient = .shared
@@ -44,8 +45,20 @@ enum NutritionLookup {
         let dishEstimate: () async -> NutritionFacts? = {
             try? await spoonacular.guessNutrition(title: name)
         }
+        let restaurantLookup: () async -> NutritionFacts? = {
+            try? await spoonacular.menuItem(matching: name)
+        }
 
-        let ordered = isDish ? [dishEstimate, labelLookup] : [labelLookup, dishEstimate]
+        var ordered = isDish ? [dishEstimate, labelLookup] : [labelLookup, dishEstimate]
+
+        // Text the user typed themselves, that isn't in the vocabulary, is
+        // disproportionately a brand or a chain — "jersey mike's turkey wrap",
+        // not "pad thai". Published menu data beats a name-only estimate for
+        // those, so it leads; vocabulary names never pay the extra quota.
+        if isFreeText {
+            ordered.insert(restaurantLookup, at: 0)
+        }
+
         for attempt in ordered {
             if let facts = await attempt() { return facts }
         }
@@ -71,7 +84,9 @@ enum NutritionLookup {
 
         guard let match else { return nil }
         return NutritionFacts(name: match.name, reference: match.per100g,
-                              basis: .per100g, source: .localDatabase)
+                              basis: .per100g, source: .localDatabase,
+                              servingGrams: match.typicalServingGrams,
+                              servingLabel: match.typicalServingLabel)
     }
 
     /// Strips the parenthetical qualifiers the local database uses ("Basmati

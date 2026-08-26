@@ -43,18 +43,39 @@ enum DemoMode {
         StreakStatus(currentStreakDays: 12, longestStreakDays: 31, lastMissedEvent: "Afternoon snack", missedCheckInsThisWeek: 1)
     }
 
-    /// One off-plan meal so the "Off plan" strip and the photo-logging tour
-    /// step have something real to point at. Marked as photo-identified since
-    /// that's the path worth showing off.
+    /// Off-plan meals so the "Off plan" strip and the logging tour steps have
+    /// something real to point at — one identified from a photo, and one built
+    /// from its parts, since those are the two paths worth showing off.
     static var loggedMeals: [LoggedMeal] {
-        [
+        let hoursAgo: (Int) -> Date = { Calendar.current.date(byAdding: .hour, value: -$0, to: Date()) ?? Date() }
+        return [
             LoggedMeal(
                 name: "Chicken shawarma",
                 portionDescription: "220 g",
                 macros: MacroTargetsLite(calories: 449, proteinG: 48, fatG: 26, carbG: 6),
-                loggedAt: Calendar.current.date(byAdding: .hour, value: -3, to: Date()) ?? Date(),
+                loggedAt: hoursAgo(3),
                 source: .openFoodFacts,
                 identifiedFromPhoto: true
+            ),
+            // The case a single photo label can never get right: the protein
+            // here is mostly the scoop, which no camera can see.
+            LoggedMeal.composed(
+                from: [
+                    LoggedComponent(name: "Greek yogurt", portionDescription: "200 g",
+                                    macros: MacroTargetsLite(calories: 146, proteinG: 20, fatG: 4, carbG: 8),
+                                    source: .localDatabase),
+                    LoggedComponent(name: "Granola", portionDescription: "40 g",
+                                    macros: MacroTargetsLite(calories: 190, proteinG: 5, fatG: 7, carbG: 27),
+                                    source: .barcode),
+                    LoggedComponent(name: "Banana", portionDescription: "100 g",
+                                    macros: MacroTargetsLite(calories: 89, proteinG: 1, fatG: 0, carbG: 23),
+                                    source: .localDatabase),
+                    LoggedComponent(name: "Whey scoop", portionDescription: "30 g",
+                                    macros: MacroTargetsLite(calories: 120, proteinG: 25, fatG: 1, carbG: 2),
+                                    source: .nutritionLabel)
+                ],
+                name: "Yogurt bowl",
+                loggedAt: hoursAgo(6)
             )
         ]
     }
@@ -79,12 +100,13 @@ final class DemoTourController: ObservableObject {
         DemoTourStep(tab: 0, title: "Coach line", body: "Miss a critical event and the accountability engine speaks up in the tone you picked at onboarding — gentle, tough-love, or hardcore. It stays silent otherwise; constant chatter would make the real hits land softer."),
         DemoTourStep(tab: 0, title: "Meals & macros", body: "Every meal is weighed in grams to hit today's protein/fat/carb targets, pulled from the built-in food database or live Spoonacular recipes — swipe a meal to confirm or mark it missed."),
         DemoTourStep(tab: 0, title: "Ate something else?", body: "Real life happens. \"Log a meal\" up top works any time, and every planned meal has an \"Ate something else\" option. Snap or upload a photo and it's identified on-device against ~720 foods from every major cuisine — then you pick the portion, because no photo can measure grams. See the shawarma under Off Plan."),
+        DemoTourStep(tab: 0, title: "Packaged & mixed meals", body: "A barcode gets the manufacturer's own numbers from millions of products. No barcode? Photograph the nutrition label and it's read on-device, no internet. And when one label can't describe a meal — the Yogurt bowl below is yogurt, granola, banana and a whey scoop — you stack the parts and they're added up. Every number is tap-to-edit, before or after saving."),
         DemoTourStep(tab: 0, title: "Workout", body: "Today's session is slotted automatically into the largest open gap in your calendar, and rotates through a weekly split built from your active fitness goals — fat loss, fast bowling power work, rucking, whatever you picked."),
         DemoTourStep(tab: 1, title: "Promise grid", body: "Four months of history, one square per day. This is the Ledger's whole thesis: an unbroken wall of kept squares is worth more than any pep talk, and a slump is visible instantly instead of getting rationalized away."),
         DemoTourStep(tab: 1, title: "Streak & weight trend", body: "The current streak resets to zero the moment a critical event is missed — loss aversion, not gold stars. The weight line tracks real HealthKit syncs, rate-limited so a bad scale reading can't fake progress."),
         DemoTourStep(tab: 1, title: "Progress photos", body: "Daily photos live in the app's private sandbox — never the system Photos library, never iCloud backup. Day-1-vs-today compare is one tap away, and the Today tab can launch straight into the camera."),
         DemoTourStep(tab: 2, title: "Settings", body: "Tune the tone (gentle → hardcore), pick an accent color that repaints every surface instantly, and turn on Screen Time shielding — LockIn blocks the apps you pick for the duration of today's workout window automatically."),
-        DemoTourStep(tab: 2, title: "That's the whole app", body: "Sign-in, a quiz-driven onboarding, and everything you just clicked through — all built on 177 tests covering the metabolic math, meal assembly, scheduling, and accountability copy. Tap Exit demo any time to get back to your own account.")
+        DemoTourStep(tab: 2, title: "That's the whole app", body: "Sign-in, a quiz-driven onboarding, and everything you just clicked through — all built on 212 tests covering the metabolic math, meal assembly, scheduling, and accountability copy. Tap Exit demo any time to get back to your own account.")
     ]
 
     var current: DemoTourStep { steps[stepIndex] }

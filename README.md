@@ -42,11 +42,11 @@ your Apple Developer Team ID and re-run `xcodegen generate`.
   (fat loss always on; fast bowling adds rotational power/sprint/anti-rotation
   core work for lumbar-stress prevention; hiking/backpacking adds weighted
   rucking + unilateral leg work for loaded trail durability).
-- **Photo meal logging** (`FoodVisionClassifier`, `FoodVocabulary`,
-  `NutritionLookup`) — snap a photo of anything you're eating and get macros.
-  Recognition runs fully on-device via Apple's MobileCLIP against a bundled
-  vocabulary of ~720 foods spanning every major cuisine. See
-  [Photo meal logging](#photo-meal-logging) below.
+- **Meal logging** (`FoodVisionClassifier`, `NutritionLabelReader`,
+  `NutritionLookup`, `BarcodeScannerView`) — log anything you eat by photo,
+  barcode, nutrition label, or text. Photo recognition and label OCR both run
+  fully on-device. Meals can be built from several items and every number is
+  editable, before or after saving. See [Meal logging](#meal-logging) below.
 - **`CalendarManager`** — EventKit read access for real busy blocks.
 - **`HealthKitManager`** — weight/workout read+write, sleep/active-energy read.
 - **`WeightSyncEngine`** — pulls latest HealthKit weight (rate-limited to once
@@ -82,7 +82,7 @@ cp LockIn/Sources/Resources/Secrets.example.plist LockIn/Sources/Resources/Secre
 - **Spoonacular** (`SpoonacularAPIKey`) — real recipes, and macro estimates for
   cooked dishes in photo meal logging. Without it the app still runs on the
   built-in food database and Open Food Facts, but logging a *cooked dish* falls
-  through to manual entry (see [Photo meal logging](#photo-meal-logging)), and
+  through to manual entry (see [Meal logging](#meal-logging)), and
   the 10 `SpoonacularClientTests` skip-fail with `missingKey`.
 
   The free tier is **150 points/day**. A cold app launch spends a few on the
@@ -102,7 +102,7 @@ cd LockIn && xcodebuild -project LockIn.xcodeproj -scheme LockIn \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-177 tests covering the metabolic engine (BMR pinned to hand-computed
+212 tests covering the metabolic engine (BMR pinned to hand-computed
 Mifflin-St Jeor values, safety floors swept across ~300 body/sex combinations,
 macros proven never negative), meal assembly and macro fitting, sleep and
 schedule construction, streak/adherence logic, accountability copy, cache
@@ -128,7 +128,7 @@ Two things worth knowing if you add tests:
   realistic adherence data, for reviewing the grid and charts against
   something other than an empty state.
 
-## Photo meal logging
+## Meal logging
 
 Two ways in, both landing in the same flow:
 
@@ -139,7 +139,59 @@ Two ways in, both landing in the same flow:
   streak tracks whether you followed through on eating, not whether you hit
   the exact grams. Blowing a meal off entirely is still a miss, via Skip.
 
-Inside, you can take a photo, search the vocabulary, or type free text.
+Inside, there are four ways to say what you ate, in descending order of how
+much the app can do for you:
+
+| route | best for | accuracy | cost |
+|---|---|---|---|
+| **Scan a barcode** | anything packaged — the Costco bar, the granola | exact, manufacturer's own | free, keyless |
+| **Scan a nutrition label** | packaged food not yet in the database | exact, if OCR reads it | free, fully offline |
+| **Take/upload a photo** | a plate of food | 84% top-1, 94% top-5 | free, fully offline |
+| **Search or type it** | everything else, incl. chain restaurants | varies by source | mostly free |
+
+Every one of them lands on a screen where **the numbers are editable**, and any
+meal can be corrected after saving. Nothing the app looks up is final.
+
+### Meals made of several things
+
+Photo recognition returns exactly *one* label. That's fine for a plate of pad
+thai and useless for a bowl of Greek yogurt with fruit, granola and a scoop of
+whey — which classifies as "granola bowl" and logs ~6 g of protein when the
+real answer is closer to 50 g.
+
+So a meal can be **built from its parts**: "Add another item" banks what's on
+screen and goes back for the next one, and the totals are summed. The saved
+entry keeps the breakdown (`LoggedMeal.components`), and its recorded source is
+the *least* trustworthy of its parts — a bowl is only as good as its weakest
+component, and claiming otherwise would dress an estimate up as label data.
+
+### Packaged food: barcodes and labels
+
+**Barcode → Open Food Facts.** ~3 million crowd-sourced products including
+Costco/Kirkland, Trader Joe's and most supermarket own-brands. A barcode names
+one exact manufactured product, so there's no name matching, no plausibility
+gate and no estimate. The product's own serving weight comes back with it, so a
+40 g protein bar opens at 40 g rather than the generic 200 g — the difference
+between logging 190 kcal and 950.
+
+**No barcode, or not in the database? Photograph the label.** `NutritionLabelReader`
+runs Vision's on-device OCR, regroups the text into visual rows (a nutrition
+panel is two columns — "Total Fat" and "8g" arrive as *separate* observations,
+and matching them back up by vertical position is what makes the parse work),
+then extracts calories, protein, fat, carbs and the serving size. No key, no
+quota, no network.
+
+It always lands on the editable form rather than a finished result, labelled
+"read 3 of 4 off the label" — OCR on curved, glossy or crumpled packaging does
+misread, and a number nobody has looked at is exactly the fake precision the
+rest of this flow avoids.
+
+**Chain restaurants** are covered via Spoonacular's menu-item database — Chili's,
+Moe's, Jersey Mike's, Panera and a few hundred others, with published figures
+rather than estimates. It's only queried for free text you typed that isn't in
+the vocabulary, since that's what a brand query looks like. **Coverage is
+genuinely partial: Chipotle is not in it.** For a Chipotle bowl, building it
+from parts (chicken, rice, black beans, salsa) is the accurate route.
 
 ### How recognition works
 
@@ -195,8 +247,16 @@ online sources are good at opposite things:
 - **Dishes** ("chicken biryani", "pad thai") → Spoonacular `guessNutrition`
   first, which estimates from a dish name. Costs quota, so it's never tried
   first for something a label database answers well.
+- **Free text not in the vocabulary** ("jersey mike's turkey wrap") → the
+  restaurant menu-item lookup leads, since that's what a brand query looks
+  like. Vocabulary names never pay that extra quota.
 
-If both miss you get **manual entry** rather than a zeroed-out meal.
+If everything misses you get **manual entry** rather than a zeroed-out meal.
+
+Concentrated foods carry a `typicalServingGrams` so the portion picker doesn't
+open them at the generic 200 g — a scoop of whey is 30 g, a tablespoon of olive
+oil 14 g. Getting this wrong isn't a rounding error: whey at 200 g is seven
+scoops and 760 kcal instead of 114.
 
 Stress testing is what forced this split. Routing everything to Open Food Facts
 first returned *"céréales et légumes, façon pad thaï, bio"* — a French packaged
@@ -220,6 +280,14 @@ identifies *what* you ate; *how much* is always your input, defaulted rather
 than invented. Sources that return per-serving values (Spoonacular) ask for
 servings; per-100g sources (label data) ask for grams. `PortionBasis` keeps
 those from being silently conflated, which would misreport a meal ~100x.
+
+**No number is unappealable.** Every lookup can be overruled — "Adjust these
+numbers" on the portion screen, and tapping any logged meal to edit it
+afterwards. A meal whose macros were hand-corrected reports itself as "adjusted
+by hand" rather than continuing to credit the lookup it replaced. Opening the
+edit sheet and closing it unchanged is *not* an edit: the fields show whole
+grams, so comparing them naively would silently round a stored 1.5 g of fat to
+2 g and stamp the meal as user-edited.
 
 **Photos are never stored.** The capture is downsized to 256×256, embedded, and
 released — never written to the sandbox, the Photos library, or iCloud, and

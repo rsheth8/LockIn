@@ -92,6 +92,15 @@ struct FoodVocabulary {
         return index < dishCount
     }
 
+    /// Whether this is a name the vocabulary knows, as opposed to free text.
+    ///
+    /// Used to decide whether a lookup is worth spending a restaurant-menu
+    /// query on: "pad thai" is a generic dish, "jersey mike's turkey wrap" is
+    /// not, and only the second is worth the quota.
+    func contains(_ name: String) -> Bool {
+        names.contains(name.lowercased())
+    }
+
     // MARK: - Matching
 
     /// Ranked food matches for an image embedding.
