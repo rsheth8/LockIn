@@ -51,7 +51,12 @@ class LockInMonitorExtension: DeviceActivityMonitor {
         let dummyEvent = ScheduledEvent(kind: .workout, title: blockLabel, detail: "", time: Date(), durationMinutes: 0, isCritical: true)
         // Reaching the threshold during a lock-in block is itself the repeated-pattern
         // signal — go straight to the hardest tier available for this tone.
-        let body = AccountabilityEngine.message(for: dummyEvent, tier: 2, tone: tone, streak: StreakStatus())
+        let current = AppGroup.sharedDefaults.object(forKey: AppGroup.Key.currentWeightLbs) as? Double
+        let goal = AppGroup.sharedDefaults.object(forKey: AppGroup.Key.goalWeightLbs) as? Double
+        let body = AccountabilityEngine.message(
+            for: dummyEvent, tier: 2, tone: tone, streak: StreakStatus(),
+            currentWeightLbs: current, goalWeightLbs: goal
+        )
 
         let content = UNMutableNotificationContent()
         content.title = "Caught you"

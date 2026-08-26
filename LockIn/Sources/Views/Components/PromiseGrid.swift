@@ -142,16 +142,33 @@ struct PromiseGrid: View {
         .frame(height: monthLabelHeight, alignment: .bottom)
     }
 
-    private func monthLabel(forWeekStartingAt index: Int) -> String? {
-        guard index < days.count else { return nil }
-        let date = days[index]
-        let month = calendar.component(.month, from: date)
-        // Label a column only when it's the first column of that month in view.
-        if index == 0 {
-            return monthName(month)
+    /// Month name per column: a month is named on the column whose week
+    /// contains its first day.
+    ///
+    /// Naming a column after the month of its *Sunday* is what produced the
+    /// crammed "MAY JUN" at the left edge — a leading column that runs May 31
+    /// to June 6 is June's column, but it was labelled May, and then June's
+    /// real label landed one square later with nowhere to go. Anchoring on the
+    /// 1st names each month once, in the right place. The three-column minimum
+    /// is a typographic floor: there is only so much room for a name above a
+    /// grid of 3pt-gapped squares.
+    private var monthLabelsByColumn: [Int: String] {
+        var result: [Int: String] = [:]
+        var lastLabelledColumn: Int?
+
+        for (column, index) in weekStarts.enumerated() {
+            guard let firstOfMonth = (index..<min(index + 7, days.count)).first(where: {
+                calendar.component(.day, from: days[$0]) == 1
+            }) else { continue }
+            if let lastLabelledColumn, column - lastLabelledColumn < 3 { continue }
+            result[index] = monthName(calendar.component(.month, from: days[firstOfMonth]))
+            lastLabelledColumn = column
         }
-        let previous = days[index - 7]
-        return calendar.component(.month, from: previous) != month ? monthName(month) : nil
+        return result
+    }
+
+    private func monthLabel(forWeekStartingAt index: Int) -> String? {
+        monthLabelsByColumn[index]
     }
 
     private func monthName(_ month: Int) -> String {

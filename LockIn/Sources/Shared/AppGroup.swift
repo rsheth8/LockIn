@@ -15,6 +15,8 @@ enum AppGroup {
         static let selectedAppsData = "screenTime.selectedAppsData"
         static let pendingDistractionEvents = "screenTime.pendingDistractionEvents"
         static let toneIntensity = "screenTime.toneIntensity"
+        static let currentWeightLbs = "screenTime.currentWeightLbs"
+        static let goalWeightLbs = "screenTime.goalWeightLbs"
     }
 }
 

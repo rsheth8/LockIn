@@ -153,8 +153,10 @@ final class MealEngineTests: XCTestCase {
         let macros = MetabolicEngine.dailyTargets(for: Fixture.rahil)
         let meals = MealEngine.assemble(from: tiny, macros: macros, profile: Fixture.rahil, date: Date())
 
+        // Only the recipe portions are servings-clamped. A protein top-up is a
+        // weighed gram amount and is deliberately much smaller.
         for meal in meals {
-            for component in meal.components {
+            for component in meal.components where component.unit == .servings {
                 XCTAssertLessThanOrEqual(component.gramsToWeigh, 300, "Servings exceeded the 3x clamp")
                 XCTAssertGreaterThanOrEqual(component.gramsToWeigh, 50, "Servings fell below the 0.5x clamp")
             }

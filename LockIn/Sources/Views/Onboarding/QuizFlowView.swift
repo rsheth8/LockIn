@@ -12,9 +12,11 @@ struct QuizFlowView: View {
 
     @State private var profile = UserProfile.blank
     @State private var step: Step = .welcome
+    @State private var goalInterpretBusy = false
+    @State private var goalInterpretError: String?
 
     enum Step: Int, CaseIterable {
-        case welcome, name, body, direction, targetWeight, intensity, activity, diet, cuisine, tastes, pantry, equipment, sport, meals, tone, review
+        case welcome, name, body, direction, targetWeight, intensity, activity, diet, cuisine, tastes, pantry, equipment, gymKit, sport, customGoals, meals, tone, review
 
         /// Steps that don't apply to every path get skipped rather than shown
         /// with a "not applicable" state.
@@ -38,6 +40,8 @@ struct QuizFlowView: View {
             switch self {
             case .targetWeight: return profile.goalDirection != .maintain
             case .intensity: return profile.goalDirection == .cut || profile.goalDirection == .gain
+            case .gymKit:
+                return profile.equipment.contains(where: { $0 != .bodyweightOnly })
             default: return true
             }
         }
@@ -142,7 +146,9 @@ struct QuizFlowView: View {
         case .tastes: tastesStep
         case .pantry: pantryStep
         case .equipment: equipmentStep
+        case .gymKit: gymKitStep
         case .sport: sportStep
+        case .customGoals: customGoalsStep
         case .meals: mealsStep
         case .tone: toneStep
         case .review: reviewStep
@@ -379,8 +385,46 @@ struct QuizFlowView: View {
                     } else {
                         profile.equipment.append(item)
                     }
+                    // Seed kit when they pick a tier so the next step isn't empty.
+                    if profile.gymAssets.isEmpty, let first = profile.equipment.first {
+                        profile.gymAssets = first.defaultAssets
+                    }
                 }
             }
+        }
+    }
+
+    private var gymKitStep: some View {
+        QuizStep(label: "Your gym", title: "What's actually there?") {
+            Text("Tick everything you can use. Workouts will only prescribe what you have — Smith, cables, Peloton, etc.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 8)
+            ChipFlow {
+                ForEach(GymAsset.allCases) { asset in
+                    IngredientChip(
+                        title: asset.displayName,
+                        selected: profile.gymAssets.contains(asset),
+                        accent: accent
+                    ) {
+                        if profile.gymAssets.contains(asset) {
+                            profile.gymAssets.remove(asset)
+                        } else {
+                            profile.gymAssets.insert(asset)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Use apartment-gym defaults") {
+                Haptics.tap()
+                profile.equipment = [.apartmentGym]
+                profile.gymAssets = GymAsset.apartmentDefault
+            }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(accent.color)
+            .padding(.top, 8)
         }
     }
 
@@ -397,10 +441,95 @@ struct QuizFlowView: View {
                     }
                 }
             }
-            Text("Optional — skip if you just want general training. These add sport-specific sessions to your split.")
+            Text("Optional presets. You can also describe goals in your own words on the next screen.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.inkMuted)
                 .padding(.top, 12)
+        }
+    }
+
+    private var customGoalsStep: some View {
+        QuizStep(label: "Your words", title: "What do you want to get good at?") {
+            TextField("e.g. bowl faster without tweaking my back, hike 15 miles with a pack…", text: $profile.customGoalText, axis: .vertical)
+                .lineLimit(4...8)
+                .font(.system(size: 16))
+                .padding(12)
+                .background(Theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Theme.rule, lineWidth: 1)
+                )
+
+            if Secrets.hasClaude {
+                Button {
+                    Task { await interpretGoals() }
+                } label: {
+                    Text(goalInterpretBusy ? "Reading your goals…" : "Have AI shape the training brief")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.ink)
+                        .foregroundStyle(Theme.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(goalInterpretBusy || profile.customGoalText.trimmingCharacters(in: .whitespacesAndNewlines).count < 8)
+                .opacity(profile.customGoalText.trimmingCharacters(in: .whitespacesAndNewlines).count < 8 ? 0.4 : 1)
+
+                Text("Uses Claude Haiku, rate-limited on device. Skip if you want — presets still work.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.inkMuted)
+            } else {
+                Text("Add a ClaudeAPIKey to Secrets.plist to turn free-text into a training brief. You can still continue without it.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.inkMuted)
+            }
+
+            if let goalInterpretError {
+                Text(goalInterpretError)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.signal)
+            }
+
+            if !profile.trainingBrief.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Brief").ledgerLabel()
+                    Text(profile.trainingBrief.summary)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.ink)
+                    ForEach(profile.trainingBrief.priorities, id: \.self) { p in
+                        Text("· \(p)")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                }
+                .padding(.top, 8)
+            }
+        }
+    }
+
+    private func interpretGoals() async {
+        goalInterpretBusy = true
+        goalInterpretError = nil
+        defer { goalInterpretBusy = false }
+        do {
+            let brief = try await ClaudeClient.shared.interpretGoals(text: profile.customGoalText, profile: profile)
+            profile.trainingBrief = brief
+            for hint in brief.mappedGoalHints {
+                if let goal = FitnessGoal(rawValue: hint) {
+                    profile.fitnessGoals.insert(goal)
+                }
+            }
+            Haptics.confirm()
+        } catch ClaudeClient.ClientError.rateLimited(let wait) {
+            goalInterpretError = "Slow down — try again in \(Int(wait.rounded()))s."
+        } catch ClaudeClient.ClientError.dailyCapReached {
+            goalInterpretError = "Daily AI cap reached. Presets still work — continue."
+        } catch ClaudeClient.ClientError.missingKey {
+            goalInterpretError = "Claude key not configured."
+        } catch {
+            goalInterpretError = "Couldn't read that — continue anyway or retry."
         }
     }
 
@@ -456,6 +585,10 @@ struct QuizFlowView: View {
                 if !profile.resolvedCuisines.isEmpty {
                     LedgerRule()
                     reviewRow("Kitchens", profile.resolvedCuisines.map(\.displayName).sorted().joined(separator: ", "))
+                }
+                if !profile.trainingBrief.isEmpty {
+                    LedgerRule()
+                    reviewRow("Focus", profile.trainingBrief.summary)
                 }
                 if profile.goalDirection != .maintain && weeks.isFinite {
                     LedgerRule()

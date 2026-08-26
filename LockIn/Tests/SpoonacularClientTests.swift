@@ -39,7 +39,7 @@ final class SpoonacularClientTests: XCTestCase {
         MockURLProtocol.reset()
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockURLProtocol.self]
-        client = SpoonacularClient(session: URLSession(configuration: config))
+        client = SpoonacularClient(session: URLSession(configuration: config), apiKey: "test-key")
     }
 
     override func tearDown() {

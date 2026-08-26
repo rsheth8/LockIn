@@ -1,5 +1,6 @@
 import SwiftUI
 import FamilyControls
+import UserNotifications
 
 /// Everything tunable in one ledger-styled list: who you are, how hard the app
 /// pushes, how it looks, and what it guards during lock-in blocks.
@@ -8,8 +9,13 @@ struct SettingsView: View {
     @EnvironmentObject var screenTimeManager: ScreenTimeManager
     @EnvironmentObject var accountManager: AccountManager
     @EnvironmentObject var calendarManager: CalendarManager
+    @EnvironmentObject var healthKitManager: HealthKitManager
     @Environment(\.accent) private var accent
     @State private var showingPicker = false
+    @State private var confirmSignOut = false
+    @State private var confirmErase = false
+    @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
+    @State private var focusMessage: String?
 
     var body: some View {
         ZStack {
@@ -17,10 +23,10 @@ struct SettingsView: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 30) {
-                    ScreenHeader(title: "Settings", subtitle: "How the app treats you")
                     accentSection
                     toneSection
                     connectionsSection
+                    profileSection
                     paceSection
                     targetsSection
                     foodSection
@@ -35,11 +41,32 @@ struct SettingsView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 96)
             }
+            .pinnedHeader {
+                ScreenHeader(title: "Settings", subtitle: "How the app treats you")
+            }
         }
         .familyActivityPicker(isPresented: $showingPicker, selection: Binding(
             get: { screenTimeManager.selection },
             set: { screenTimeManager.saveSelection($0) }
         ))
+        .task { await refreshNotificationStatus() }
+        .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) {
+                accountManager.signOut()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your plan stays on this device. Sign back in to keep syncing with iCloud.")
+        }
+        .confirmationDialog("Erase everything?", isPresented: $confirmErase, titleVisibility: .visible) {
+            Button("Erase all data", role: .destructive) {
+                appState.eraseAllLocalData()
+                accountManager.signOut()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Deletes your profile, schedule, streak, and adherence history on this device. Progress photos in Files stay until you delete them.")
+        }
     }
 
     // MARK: - Accent
@@ -82,9 +109,11 @@ struct SettingsView: View {
                 row("Status", accountManager.isSignedIn ? "Signed in" : "On this device")
                 LedgerRule()
                 row("Recipes", Secrets.hasSpoonacular ? "Spoonacular" : "Built-in database")
+                LedgerRule()
+                row("Storage", "SwiftData on device")
             }
             Text(accountManager.isSignedIn
-                 ? "Your plan syncs to your own private iCloud. Progress photos stay on this device only."
+                 ? "Your plan syncs to your own private iCloud on every check-in. Progress photos stay on this device only."
                  : "Everything is stored on this device. Sign in to carry your plan to a new phone.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.inkMuted)
@@ -92,12 +121,27 @@ struct SettingsView: View {
 
             Button {
                 Haptics.tap()
-                accountManager.signOut()
+                if accountManager.isSignedIn {
+                    confirmSignOut = true
+                } else {
+                    accountManager.signOut()
+                }
             } label: {
                 Text(accountManager.isSignedIn ? "Sign out" : "Set up an account")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Theme.signal)
                     .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                Haptics.tap()
+                confirmErase = true
+            } label: {
+                Text("Erase all data")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.signal)
+                    .padding(.vertical, 4)
             }
             .buttonStyle(.plain)
         }
@@ -144,15 +188,223 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("The rest of your day").ledgerLabel()
             VStack(spacing: 0) {
-                row("Calendar", calendarManager.authorized ? "Live · writes to Lock In" : "Off")
+                permissionRow(
+                    label: "Calendar",
+                    status: calendarManager.authorized ? "Live · writes to Lock In" : "Off",
+                    isOn: calendarManager.authorized
+                ) {
+                    Task { await calendarManager.requestAccess() }
+                }
                 LedgerRule()
-                row("Reminders", calendarManager.remindersAuthorized ? "Due today on the timeline" : "Off")
+                permissionRow(
+                    label: "Reminders",
+                    status: calendarManager.remindersAuthorized ? "Due today on the timeline" : "Off",
+                    isOn: calendarManager.remindersAuthorized
+                ) {
+                    Task { await calendarManager.requestAccess() }
+                }
+                LedgerRule()
+                permissionRow(
+                    label: "Health",
+                    status: healthKitManager.authorized ? "Weight sync on" : "Off",
+                    isOn: healthKitManager.authorized
+                ) {
+                    Task { await healthKitManager.requestAccess() }
+                }
+                LedgerRule()
+                permissionRow(
+                    label: "Notifications",
+                    status: notificationLabel,
+                    isOn: notificationStatus == .authorized || notificationStatus == .provisional
+                ) {
+                    Task {
+                        _ = await NotificationManager.shared.requestAuthorization()
+                        await refreshNotificationStatus()
+                    }
+                }
             }
-            Text("Add or move something in Calendar and today's meals and workout shift around it. Done on a reminder completes it in Reminders. Lock In events also land on a calendar named Lock In, so Watch and Calendar.app see the same day.")
+            Text("Add or move something in Calendar and today's meals and workout shift around it. Denied access can be fixed here — or in iOS Settings → Lock In.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var notificationLabel: String {
+        switch notificationStatus {
+        case .authorized, .provisional: return "On"
+        case .denied: return "Off — open iOS Settings"
+        default: return "Not asked"
+        }
+    }
+
+    private func permissionRow(label: String, status: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.inkMuted)
+                Text(status)
+                    .font(Theme.mono(12, weight: .semibold))
+                    .foregroundStyle(isOn ? Theme.ink : Theme.signal)
+            }
+            Spacer()
+            if !isOn {
+                Button("Enable", action: action)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(accent.color)
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 11)
+    }
+
+    private func refreshNotificationStatus() async {
+        let status = await NotificationManager.shared.authorizationStatus()
+        await MainActor.run { notificationStatus = status }
+    }
+
+    // MARK: - Profile body / diet / equipment
+
+    private var profileSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Your body & setup").ledgerLabel()
+            VStack(spacing: 0) {
+                stepperRow("Age", value: Int(appState.profile.age), range: 16...80) { age in
+                    mutateProfile { $0.age = age }
+                }
+                LedgerRule()
+                stepperRow("Height (in)", value: Int(appState.profile.heightInches), range: 54...84) { inches in
+                    mutateProfile { $0.heightInches = Double(inches) }
+                }
+                LedgerRule()
+                stepperRow("Weight (lb)", value: Int(appState.profile.currentWeightLbs), range: 90...400) { lbs in
+                    mutateProfile { $0.currentWeightLbs = Double(lbs) }
+                }
+                LedgerRule()
+                stepperRow("Goal (lb)", value: Int(appState.profile.goalWeightLbs), range: 90...400) { lbs in
+                    mutateProfile { $0.goalWeightLbs = Double(lbs) }
+                }
+                LedgerRule()
+                pickerRow("Sex", selection: Binding(
+                    get: { appState.profile.sex },
+                    set: { sex in mutateProfile { $0.sex = sex } }
+                )) {
+                    Text("Male").tag(Sex.male)
+                    Text("Female").tag(Sex.female)
+                }
+                LedgerRule()
+                pickerRow("Activity", selection: Binding(
+                    get: { appState.profile.activityLevel },
+                    set: { level in mutateProfile { $0.activityLevel = level } }
+                )) {
+                    ForEach(ActivityLevel.allCases, id: \.self) { level in
+                        Text(level.displayName).tag(level)
+                    }
+                }
+                LedgerRule()
+                pickerRow("Diet", selection: Binding(
+                    get: { appState.profile.dietaryPattern },
+                    set: { diet in mutateProfile { $0.dietaryPattern = diet } }
+                )) {
+                    ForEach(DietaryPattern.allCases) { diet in
+                        Text(diet.displayName).tag(diet)
+                    }
+                }
+                LedgerRule()
+                stepperRow("Meals / day", value: appState.profile.mealsPerDay, range: 3...5) { meals in
+                    mutateProfile { $0.mealsPerDay = meals }
+                }
+            }
+
+            Text("Equipment").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
+            ChipFlow {
+                ForEach(Equipment.allCases, id: \.self) { item in
+                    IngredientChip(
+                        title: item.displayName,
+                        selected: appState.profile.equipment.contains(item),
+                        accent: accent
+                    ) {
+                        Haptics.tap()
+                        mutateProfile { profile in
+                            if let idx = profile.equipment.firstIndex(of: item) {
+                                if profile.equipment.count > 1 { profile.equipment.remove(at: idx) }
+                            } else {
+                                profile.equipment.append(item)
+                            }
+                            if profile.gymAssets.isEmpty, let first = profile.equipment.first {
+                                profile.gymAssets = first.defaultAssets
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Kit in the room").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
+            ChipFlow {
+                ForEach(GymAsset.allCases) { asset in
+                    IngredientChip(
+                        title: asset.displayName,
+                        selected: appState.profile.gymAssets.contains(asset),
+                        accent: accent
+                    ) {
+                        Haptics.tap()
+                        mutateProfile { profile in
+                            if profile.gymAssets.contains(asset) {
+                                profile.gymAssets.remove(asset)
+                            } else {
+                                profile.gymAssets.insert(asset)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Changing weight, diet, meals, equipment, or kit rebuilds today's plan.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func mutateProfile(_ body: (inout UserProfile) -> Void) {
+        var updated = appState.profile
+        body(&updated)
+        appState.saveProfile(updated)
+    }
+
+    private func stepperRow(_ label: String, value: Int, range: ClosedRange<Int>, onChange: @escaping (Int) -> Void) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.inkMuted)
+            Spacer()
+            Stepper(value: Binding(
+                get: { value },
+                set: { onChange($0) }
+            ), in: range) {
+                Text("\(value)")
+                    .font(Theme.mono(14, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .frame(minWidth: 36, alignment: .trailing)
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    private func pickerRow<T: Hashable>(_ label: String, selection: Binding<T>, @ViewBuilder content: () -> some View) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.inkMuted)
+            Spacer()
+            Picker(label, selection: selection, content: content)
+                .labelsHidden()
+                .tint(Theme.ink)
+        }
+        .padding(.vertical, 8)
     }
 
     // MARK: - Pace
@@ -311,6 +563,42 @@ struct SettingsView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if !appState.profile.likedRecipes.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Your menu").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
+                    ForEach(appState.profile.likedRecipes.prefix(20)) { recipe in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(recipe.title)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(Theme.ink)
+                                if let cal = recipe.calories {
+                                    Text("\(Int(cal)) kcal")
+                                        .font(Theme.mono(11))
+                                        .foregroundStyle(Theme.inkMuted)
+                                }
+                            }
+                            Spacer()
+                            Button {
+                                Haptics.tap()
+                                appState.removeLiked(id: recipe.id)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(Theme.signal)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 6)
+                        LedgerRule()
+                    }
+                    Text("Saved from Today — swaps prefer these first.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.inkMuted)
+                }
+                .padding(.top, 8)
+            }
         }
     }
 
@@ -376,7 +664,31 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
 
-                Text("These get shielded automatically during your workout window. Open one anyway and it stays blocked — and it costs you the streak.")
+                Button {
+                    Haptics.tap()
+                    if screenTimeManager.startFocusBlock(minutes: 45) != nil {
+                        focusMessage = "45-minute focus block is live."
+                    } else {
+                        focusMessage = "Pick at least one guarded app or category first."
+                    }
+                } label: {
+                    Text("Start 45-min focus lock-in")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.ink)
+                        .foregroundStyle(Theme.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                if let focusMessage {
+                    Text(focusMessage)
+                        .font(.system(size: 12))
+                        .foregroundStyle(accent.color)
+                }
+
+                Text("Guarded apps are shielded during your workout window and any focus block you start. Open one anyway and it costs the streak.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -394,7 +706,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
 
-                Text("Lets LockIn shield distracting apps during workouts and catch you if you use them anyway. Requires Apple to approve the Family Controls entitlement on your developer account.")
+                Text("Lets LockIn shield distracting apps during workouts and focus blocks. Requires Apple to approve the Family Controls entitlement on your developer account.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -435,10 +747,15 @@ struct SettingsView: View {
     }
 
 #if DEBUG
-    /// Development only — stripped from release builds.
+    /// Development only — stripped from release builds. Prefer the Lab tab
+    /// for full scenario coverage; these are quick shortcuts.
     private var debugSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Debug").ledgerLabel()
+            Text("Use the Lab tab for personas, calendar fixtures, overdue days, and flow jumps.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Button("Seed history") {
                     Haptics.tap()

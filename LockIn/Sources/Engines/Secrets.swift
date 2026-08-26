@@ -6,7 +6,8 @@ import Foundation
 /// a local plist is fine.
 ///
 /// To set up: copy `Secrets.example.plist` to `Secrets.plist` in
-/// `LockIn/Sources/Resources/` and fill in your key.
+/// `LockIn/Sources/Resources/` (and keep the `BundleResources/Secrets.plist`
+/// symlink, or copy into `BundleResources/` so Xcode packs it).
 enum Secrets {
     private static let values: [String: Any] = {
         guard let url = Bundle.main.url(forResource: "Secrets", withExtension: "plist"),
@@ -37,5 +38,21 @@ enum Secrets {
               key != "PASTE_YOUR_GOOGLE_CLIENT_ID_HERE"
         else { return nil }
         return key
+    }
+
+    static var claudeAPIKey: String? {
+        guard let key = values["ClaudeAPIKey"] as? String,
+              !key.isEmpty,
+              key != "PASTE_YOUR_CLAUDE_KEY_HERE"
+        else { return nil }
+        return key
+    }
+
+    static var hasClaude: Bool { claudeAPIKey != nil }
+
+    /// Optional override; defaults to Haiku inside ClaudeClient.
+    static var claudeModel: String? {
+        guard let model = values["ClaudeModel"] as? String, !model.isEmpty else { return nil }
+        return model
     }
 }

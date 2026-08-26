@@ -14,10 +14,16 @@ actor SpoonacularClient {
     static let shared = SpoonacularClient()
 
     private let session: URLSession
+    private let apiKeyOverride: String?
     private let host = "https://api.spoonacular.com"
 
-    init(session: URLSession = .shared) {
+    init(session: URLSession = .shared, apiKey: String? = nil) {
         self.session = session
+        self.apiKeyOverride = apiKey
+    }
+
+    private var resolvedAPIKey: String? {
+        apiKeyOverride ?? Secrets.spoonacularKey
     }
 
     enum ClientError: Error, Equatable {
@@ -44,7 +50,7 @@ actor SpoonacularClient {
     /// compensate but an empty pool can't.
     func recipePool(profile: UserProfile, mealType: MealType? = nil,
                     minProteinPerServing: Int = 20, count: Int = 40) async throws -> [SpoonacularRecipe] {
-        guard Secrets.spoonacularKey != nil else { throw ClientError.missingKey }
+        guard resolvedAPIKey != nil else { throw ClientError.missingKey }
 
         let hasCuisine = !profile.resolvedCuisines.isEmpty
         let hasInclude = !profile.foodPreferences.searchIncludeIngredients.isEmpty
@@ -91,12 +97,54 @@ actor SpoonacularClient {
             case .snack: return .snack
             }
         }
+
+        /// Things that are never a meal on their own, whatever their macros say.
+        /// `type=main course` alone does not hold: Spoonacular tags plenty of
+        /// dips and sauces as main courses, which is how "Jalapeno Queso With
+        /// Goat Cheese" was served as lunch. Screening the returned dish types
+        /// and titles is the second gate.
+        static let condimentDishTypes: Set<String> = [
+            "dip", "sauce", "condiment", "spread", "dressing", "marinade",
+            "beverage", "drink", "frosting"
+        ]
+
+        static let condimentTitleWords: [String] = [
+            "dip", "sauce", "queso", "salsa", "hummus", "spread", "dressing",
+            "marinade", "chutney", "relish", "pesto", "aioli", "syrup", "jam",
+            "glaze", "frosting", "seasoning", "rub", "smoothie", "cocktail",
+            "margarita", "latte", "juice"
+        ]
+
+        /// True when this recipe is a plausible dish for the slot.
+        func accepts(_ recipe: SpoonacularRecipe) -> Bool {
+            let types = Set((recipe.dishTypes ?? []).map { $0.lowercased() })
+            if !types.isDisjoint(with: Self.condimentDishTypes) { return false }
+
+            let title = recipe.title.lowercased()
+            let words = title.split { !$0.isLetter }.map(String.init)
+            if words.contains(where: { Self.condimentTitleWords.contains($0) }) { return false }
+
+            switch self {
+            case .mainCourse:
+                // A side or an appetiser isn't lunch either — but only reject
+                // when Spoonacular actually said so, since dishTypes is often
+                // missing and an empty set must not empty the pool.
+                if types.isEmpty { return true }
+                if !types.isDisjoint(with: ["main course", "main dish", "lunch", "dinner"]) { return true }
+                return types.isDisjoint(with: ["side dish", "appetizer", "antipasti", "fingerfood", "dessert"])
+            case .breakfast:
+                if types.isEmpty { return true }
+                return !types.contains("dessert")
+            case .snack:
+                return true
+            }
+        }
     }
 
     private func search(profile: UserProfile, count: Int, mealType: MealType?,
                         includeIngredients: Bool, includeCuisine: Bool,
                         minProtein: Int?) async throws -> [SpoonacularRecipe] {
-        guard let key = Secrets.spoonacularKey else { throw ClientError.missingKey }
+        guard let key = resolvedAPIKey else { throw ClientError.missingKey }
 
         var components = URLComponents(string: "\(host)/recipes/complexSearch")!
         var items: [URLQueryItem] = [
@@ -137,12 +185,14 @@ actor SpoonacularClient {
         components.queryItems = items
 
         let data = try await get(components.url!)
-        return try JSONDecoder().decode(SpoonacularSearchResponse.self, from: data).results
+        let results = try JSONDecoder().decode(SpoonacularSearchResponse.self, from: data).results
+        guard let mealType else { return results }
+        return results.filter { mealType.accepts($0) }
     }
 
     /// Full detail including ingredient amounts, for the recipe sheet.
     func recipe(id: Int) async throws -> SpoonacularRecipeDetail {
-        guard let key = Secrets.spoonacularKey else { throw ClientError.missingKey }
+        guard let key = resolvedAPIKey else { throw ClientError.missingKey }
         let url = URL(string: "\(host)/recipes/\(id)/information?includeNutrition=true&apiKey=\(key)")!
         let data = try await get(url)
         return try JSONDecoder().decode(SpoonacularRecipeDetail.self, from: data)
@@ -180,6 +230,21 @@ struct SpoonacularRecipe: Codable, Equatable, Identifiable {
     let servings: Int?
     let sourceUrl: String?
     let nutrition: Nutrition?
+    /// Spoonacular's own categorisation ("main course", "dip", "sauce", …).
+    /// Absent on some results, which is why `MealType.accepts` also screens
+    /// the title.
+    let dishTypes: [String]?
+
+    init(id: Int, title: String, readyInMinutes: Int? = nil, servings: Int? = nil,
+         sourceUrl: String? = nil, dishTypes: [String]? = nil, nutrition: Nutrition? = nil) {
+        self.id = id
+        self.title = title
+        self.readyInMinutes = readyInMinutes
+        self.servings = servings
+        self.sourceUrl = sourceUrl
+        self.nutrition = nutrition
+        self.dishTypes = dishTypes
+    }
 
     struct Nutrition: Codable, Equatable {
         let nutrients: [Nutrient]

@@ -19,6 +19,9 @@ final class ScreenTimeManager: ObservableObject {
 
     init() {
         loadSelection()
+        // Restore the real Family Controls status so Settings doesn't show
+        // "Grant" after every relaunch when the user already approved.
+        authorizationStatus = AuthorizationCenter.shared.authorizationStatus
     }
 
     func requestAuthorization() async {
@@ -53,6 +56,9 @@ final class ScreenTimeManager: ObservableObject {
     func scheduleLockInBlock(_ block: LockInBlock) {
         guard isAuthorized, !selection.applicationTokens.isEmpty || !selection.categoryTokens.isEmpty else { return }
 
+        // Replace any prior registration with the same id (e.g. rebuilt workout).
+        cancelBlock(block)
+
         let calendar = Calendar.current
         let startComponents = calendar.dateComponents([.hour, .minute], from: block.start)
         let endComponents = calendar.dateComponents([.hour, .minute], from: block.end)
@@ -79,6 +85,21 @@ final class ScreenTimeManager: ObservableObject {
             // Scheduling failures (e.g. overlapping activity name) are non-fatal —
             // the day's other reminders still fire, just without app-shielding for this block.
         }
+    }
+
+    /// Starts an immediate focus / study lock-in for `minutes` from now.
+    @discardableResult
+    func startFocusBlock(label: String = "Focus", minutes: Int = 45) -> LockInBlock? {
+        let start = Date()
+        let end = start.addingTimeInterval(TimeInterval(minutes * 60))
+        let block = LockInBlock(
+            id: "focus-\(DayRecord.key(for: start))-\(Int(start.timeIntervalSince1970))",
+            label: label,
+            start: start,
+            end: end
+        )
+        scheduleLockInBlock(block)
+        return activeBlocks.contains(where: { $0.id == block.id }) ? block : nil
     }
 
     func cancelBlock(_ block: LockInBlock) {

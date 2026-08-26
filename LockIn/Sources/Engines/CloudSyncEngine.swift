@@ -19,6 +19,7 @@ actor CloudSyncEngine {
     private enum RecordType {
         static let profile = "UserProfile"
         static let dayRecord = "DayRecord"
+        static let streak = "StreakStatus"
     }
 
     /// Whether the device has a usable iCloud account. Sync silently no-ops
@@ -96,5 +97,23 @@ actor CloudSyncEngine {
               let records = try? JSONDecoder().decode([DayRecord].self, from: payload)
         else { return [] }
         return records
+    }
+
+    // MARK: - Streak
+
+    func pushStreak(_ streak: StreakStatus, profileID: UUID) async {
+        guard await isAvailable() else { return }
+        guard let payload = try? JSONEncoder().encode(streak) else { return }
+
+        let recordID = CKRecord.ID(recordName: "streak-\(profileID.uuidString)")
+        let record: CKRecord
+        if let existing = try? await database.record(for: recordID) {
+            record = existing
+        } else {
+            record = CKRecord(recordType: RecordType.streak, recordID: recordID)
+        }
+        record["payload"] = payload as CKRecordValue
+        record["updatedAt"] = Date() as CKRecordValue
+        _ = try? await database.save(record)
     }
 }

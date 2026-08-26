@@ -46,11 +46,17 @@ final class RecipeCache {
         defaults.set(signature, forKey: poolSignatureKey + bucket)
     }
 
+    /// Bumped whenever the query or the result filtering changes, so a pool
+    /// cached under the old rules is discarded instead of serving last week's
+    /// dips for another six days.
+    static let filterVersion = "v2-course-screened"
+
     /// Identifies what a cached plan was generated for.
     static func signature(calories: Int, profile: UserProfile) -> String {
         let prefs = profile.foodPreferences
         let cuisines = profile.resolvedCuisines.map(\.rawValue).sorted().joined(separator: ",")
         return [
+            filterVersion,
             String(calories),
             profile.dietaryPattern.rawValue,
             cuisines,

@@ -5,6 +5,9 @@ import UIKit
 /// directory — never the system Photos library and never synced anywhere —
 /// so they stay private to this device by default. Metadata (date, linked
 /// weight) is tracked separately via PersistenceStore.
+/// Main-actor confined: it writes photo metadata through `PersistenceStore`,
+/// which owns a `ModelContext` and must stay on one actor.
+@MainActor
 final class ProgressPhotoStore {
     static let shared = ProgressPhotoStore()
 

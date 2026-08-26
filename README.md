@@ -2,10 +2,9 @@
 
 A native iOS app that plans and enforces your daily routine — wake, caffeine,
 weighed macro meals (with prep-ahead reminders), workouts slotted around your
-real calendar, sleep schedule, and a tough-love accountability system —
-targeting your 220→180 lb goal.
+real calendar, sleep schedule, and a tough-love accountability system.
 
-## Status: working MVP scaffold, builds clean
+## Status: daily-driver ready
 
 `LockIn/` is a full SwiftUI + XcodeGen project. Open it in Xcode:
 
@@ -24,64 +23,67 @@ your Apple Developer Team ID and re-run `xcodegen generate`.
 
 ## What's implemented
 
-- **`MetabolicEngine`** — Mifflin-St Jeor BMR × activity factor TDEE, 22%
-  deficit, 1g/lb protein, evidence-based macro split. Recalculate weekly as
-  weight drops (call `MetabolicEngine.dailyTargets` again with updated profile).
+- **`MetabolicEngine`** — Mifflin-St Jeor BMR × activity factor TDEE, rate-based
+  deficit/surplus, 1g/lb protein, evidence-based macro split. Recalculates as
+  weight changes.
 - **`SleepEngine`** — wake time anchored to your first calendar commitment,
-  8hr sleep target, 45-min wind-down, 9hr caffeine cutoff — standard
-  sleep-hygiene science.
-- **`MealEngine`** — builds 4 meals/day from a starter vegetarian South-Asian
-  food database (`FoodDatabase.swift`), scaled in grams to hit your macro
-  targets, with prep-ahead lead times (e.g. soaking dal) folded into the
-  schedule.
-- **`ScheduleEngine`** — assembles the full day timeline, slots your workout
-  into the largest free gap between calendar busy blocks (2pm–9pm window).
-- **`AccountabilityEngine`** — tiered tough-love messages (gentle/tough-love/
-  hardcore) for missed critical events, loss-aversion streak framing.
-- **`WorkoutEngine`** — rotating weekly split built from active `FitnessGoal`s
-  (fat loss always on; fast bowling adds rotational power/sprint/anti-rotation
-  core work for lumbar-stress prevention; hiking/backpacking adds weighted
-  rucking + unilateral leg work for loaded trail durability).
-- **`CalendarManager`** — EventKit read access for real busy blocks.
-- **`HealthKitManager`** — weight/workout read+write, sleep/active-energy read.
-- **`WeightSyncEngine`** — pulls latest HealthKit weight (rate-limited to once
-  per ~20hrs, outlier-filtered) and updates the profile so `MetabolicEngine`
-  targets track actual weight loss instead of staying pinned to day-1 numbers.
-- **`ProgressPhotoStore`** — daily progress photos, JPEGs in the app's
-  sandboxed Documents dir (excluded from iCloud/device backup), metadata only
-  in `PersistenceStore`. Never touches the system Photos library.
-- **`NotificationManager`** — schedules primary + escalating local
-  notifications per critical event.
-- **Screen Time distraction monitoring** (`LockInMonitor` — a second Xcode
-  target, since DeviceActivityMonitor extensions run in their own process):
-  pick distracting apps/categories in Settings, LockIn shields them for the
-  duration of today's workout window automatically, and if you burn real time
-  on them anyway (1-min cumulative threshold) the extension fires an
-  immediate tough-love notification and logs it — draining that log resets
-  your streak, same as a missed check-in. Main app and extension talk only
-  through an App Group container (`group.com.rahilsheth.lockin`,
-  `Sources/Shared/AppGroup.swift`); the extension never touches the network.
-- Onboarding, Today (check-in), Progress (camera + gallery + day-1-vs-today
-  compare), and Settings (Screen Time + tone) tabs.
-- Check-in confirmation (swipe to confirm/miss on Today), streak tracking.
+  8hr sleep target, 45-min wind-down, 9hr caffeine cutoff.
+- **`MealEngine`** — Spoonacular live recipes when keyed, otherwise the built-in
+  food database. Today shows which source is active. Recipe portions are stated
+  in *servings* and database foods in *grams* — a recipe has no per-gram truth,
+  so labelling one "141g" would be a number you can't weigh. Where the pool
+  lands under the protein target, portions are scaled and a weighed protein
+  top-up added to close the gap; whatever gap remains is printed on the Fuel
+  row rather than hidden behind the target.
+- **`ScheduleEngine` + `ScheduleSlotter`** — full day timeline; meals and workout
+  slot into free gaps around Calendar busy blocks.
+- **`ScheduleRefreshTask`** — midnight timer + foreground staleness check so
+  yesterday's plan never sticks after rollover.
+- **`AccountabilityEngine`** — tiered messages using *your* goal weights (not
+  hardcoded copy); escalations cancel when you tap Done/Skip.
+- **`WorkoutEngine`** — weekly split from `FitnessGoal`s, adapted to quiz
+  equipment (full gym / home / bodyweight).
+- **`CalendarManager`** — EventKit read + Lock In calendar write-back.
+- **`HealthKitManager` + weigh-in** — pull weight from Health; confirming the
+  morning weigh-in writes back and updates macros.
+- **`WeightSyncEngine`** — rate-limited HealthKit pull with outlier filter.
+- **`ProgressPhotoStore`** — on-device JPEGs only (never Photos library / iCloud).
+- **`NotificationManager`** — primary + 15/45m escalations; cancel-on-confirm.
+- **`PersistenceStore`** — SwiftData keyed blobs (migrates prior UserDefaults).
+- **`CloudSyncEngine`** — private iCloud profile + day records + streak on
+  every check-in (photos stay local).
+- **Screen Time** (`LockInMonitor` extension) — shields during workout *and*
+  manually started focus blocks; auth status restored on launch.
+- Accounts (Apple / Google / local), quiz onboarding, Settings for body/diet/
+  equipment/permissions, sign-out confirm + erase-all.
 
-## Setup: API keys
-
-Copy the example secrets file and fill in your keys — `Secrets.plist` is
-gitignored and never committed:
+## Setup: API keys & signing
 
 ```bash
 cp LockIn/Sources/Resources/Secrets.example.plist LockIn/Sources/Resources/Secrets.plist
+# Xcode packs secrets from BundleResources — keep the symlink (or copy):
+ln -sf ../Sources/Resources/Secrets.plist LockIn/BundleResources/Secrets.plist
 ```
 
-- **Spoonacular** (`SpoonacularAPIKey`) — real recipes and macros. Without it
-  the app runs entirely on the built-in food database; nothing breaks.
-- **Google** (`GoogleClientID`) — enables the Google sign-in button. Also paste
-  your `REVERSED_CLIENT_ID` into `GOOGLE_REVERSED_CLIENT_ID` in `project.yml`
-  so the OAuth redirect resolves. Without it the button stays hidden and Apple
-  sign-in still works.
+- **Spoonacular** — optional. Without it, built-in meals still work. For App
+  Store distribution, proxy the API so the key is not on-device; a personal
+  build may keep the key in `Secrets.plist` (gitignored).
+- **Google** — `GoogleClientID` in Secrets + `GOOGLE_REVERSED_CLIENT_ID` in
+  `project.yml` (or a gitignored `Local.xcconfig`). Button stays hidden until set.
+- **Claude** (`ClaudeAPIKey`) — optional. Powers the quiz “what do you want to
+  get good at?” brief via Haiku, rate-limited on device (20s gap, 15/day).
+  Without it the free-text field still saves; presets still work.
+- **`DEVELOPMENT_TEAM`** — required for device / TestFlight / Store.
+- **Family Controls** — request Apple approval for your team before Screen Time
+  works on a real device (opt-in; app runs without it).
 
 Re-run `xcodegen generate` after editing `project.yml`.
+
+## Privacy
+
+`PrivacyInfo.xcprivacy` declares Health/fitness + user-content use for app
+functionality only (no tracking). Usage strings match what the app actually
+does (weigh-in write, no unused Face ID / background-fetch modes).
 
 ## Tests
 
@@ -90,45 +92,25 @@ cd LockIn && xcodebuild -project LockIn.xcodeproj -scheme LockIn \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-128 tests covering the metabolic engine (BMR pinned to hand-computed
-Mifflin-St Jeor values, safety floors swept across ~300 body/sex combinations,
-macros proven never negative), meal assembly and macro fitting, sleep and
-schedule construction, streak/adherence logic, accountability copy, cache
-invalidation, and Spoonacular decoding + the filter-relaxation ladder against
-a mocked `URLProtocol` (no network, no quota).
+Unit coverage includes metabolic math, meals, sleep/schedule, Spoonacular
+filter ladder (mocked), persistence, accountability goal copy, equipment
+adaptation, midnight staleness, and AppState check-in / weigh-in / streak paths.
 
-Two things worth knowing if you add tests:
+Notes:
 
-- The test bundle is **hosted in the app**, so anything the app does at launch
-  runs during a test pass. `RuntimeEnvironment.isRunningUnitTests` keeps
-  startup and UI inert — without it, `RootView` requests Calendar/Health
-  permissions and the suite hangs on a system dialog forever.
-- Settings has a DEBUG-only "Seed history" button that generates ~4 months of
-  realistic adherence data, for reviewing the grid and charts against
-  something other than an empty state.
+- The test bundle is **hosted in the app**. `RuntimeEnvironment.isRunningUnitTests`
+  keeps launch UI/permissions inert so the suite doesn't hang on system dialogs.
+- **DEBUG Lab tab** — a fourth tab (flask icon) with one-tap personas, calendar
+  fixtures, overdue/streak/distraction injectors, meal-source forcing, and jumps
+  back to quiz / sign-in. Overrides show a banner on Today. Stripped from Release.
+- Settings still has DEBUG shortcuts to seed/clear history.
 
-## Project structure note
+## Still later (nice-to-have)
 
-`LockInMonitor` (`LockIn/MonitorExtension/`) is a separate app-extension
-target — it needs the **Family Controls entitlement approved for your
-specific Apple Developer account** before Screen Time monitoring works on a
-real device (Settings → request from Apple; it's a manual review, not
-instant). Without that approval, `requestAuthorization` in
-`ScreenTimeManager` will fail gracefully and the rest of the app is
-unaffected — Screen Time is opt-in, not a hard dependency.
-
-## What's next (not yet built)
-
-- Manual weigh-in entry UI that writes to HealthKit (currently weight only
-  flows *in* from HealthKit — nothing logs a fresh reading from the app itself).
-- Extending lock-in blocks beyond the workout window to manually-started study
-  sessions (the `LockInBlock` model already supports arbitrary blocks —
-  `ScreenTimeManager.scheduleLockInBlock` just isn't called for anything but
-  today's workout yet).
-- Expand `FoodDatabase` with verified USDA/label macro data and more variety.
-- Apple Watch companion + widgets/Live Activities for the current event.
-- Real persistence (SwiftData) once weight/meal logs need history and queries.
-- Weekly progress review screen (adherence %, streak, weight trend chart).
+- Expand `FoodDatabase` with verified USDA/label macros.
+- Apple Watch companion + widgets / Live Activities.
+- Dedicated weekly progress review screen.
+- Server-side Spoonacular proxy for public App Store builds.
 
 ## Design rationale (the science)
 

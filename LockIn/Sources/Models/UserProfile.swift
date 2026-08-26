@@ -35,11 +35,12 @@ enum ActivityLevel: String, Codable, CaseIterable {
 }
 
 enum Equipment: String, Codable, CaseIterable {
-    case fullGym, homeEquipment, bodyweightOnly
+    case fullGym, apartmentGym, homeEquipment, bodyweightOnly
 
     var displayName: String {
         switch self {
         case .fullGym: return "Full gym"
+        case .apartmentGym: return "Apartment gym"
         case .homeEquipment: return "Home equipment"
         case .bodyweightOnly: return "Bodyweight only"
         }
@@ -47,7 +48,8 @@ enum Equipment: String, Codable, CaseIterable {
 
     var blurb: String {
         switch self {
-        case .fullGym: return "Barbells, machines, cables"
+        case .fullGym: return "Barbells, machines, cables — commercial gym"
+        case .apartmentGym: return "Smith, cables, dumbbells, cardio machines"
         case .homeEquipment: return "Dumbbells, bands, a bench"
         case .bodyweightOnly: return "No equipment — calisthenics and cardio"
         }
@@ -133,8 +135,16 @@ struct UserProfile: Codable, Equatable, Identifiable {
     var deficitIntensity: DeficitIntensity = .aggressive
     var activityLevel: ActivityLevel
     var equipment: [Equipment]
+    /// Specific machines/tools — used when `equipment` includes apartment/home/full.
+    var gymAssets: Set<GymAsset> = []
     var hasAppleWatch: Bool
     var fitnessGoals: Set<FitnessGoal>
+    /// Free-text answer from onboarding: "get better at bowling pace", etc.
+    var customGoalText: String = ""
+    /// Claude-parsed brief derived from `customGoalText`. Optional.
+    var trainingBrief: TrainingBrief = .empty
+    /// Personal recipe menu — likes the user wants to see again / swap toward.
+    var likedRecipes: [LikedRecipe] = []
     var dietaryPattern: DietaryPattern
     /// Kept as the primary cuisine for backwards compatibility with saved
     /// profiles; `foodPreferences.cuisines` is the multi-select the UI uses.
@@ -163,8 +173,12 @@ struct UserProfile: Codable, Equatable, Identifiable {
             goalDirection: .cut,
             activityLevel: .lightlyActive,
             equipment: [.homeEquipment],
+            gymAssets: Equipment.homeEquipment.defaultAssets,
             hasAppleWatch: false,
             fitnessGoals: [.fatLoss],
+            customGoalText: "",
+            trainingBrief: .empty,
+            likedRecipes: [],
             dietaryPattern: .omnivore,
             cuisinePreference: .noPreference,
             allergies: [],
@@ -189,9 +203,11 @@ struct UserProfile: Codable, Equatable, Identifiable {
         profile.goalWeightLbs = 180
         profile.goalDirection = .cut
         profile.activityLevel = .lightlyActive
-        profile.equipment = [.fullGym, .homeEquipment]
+        profile.equipment = [.apartmentGym]
+        profile.gymAssets = GymAsset.apartmentDefault
         profile.hasAppleWatch = true
         profile.fitnessGoals = [.fatLoss, .fastBowling, .hikingBackpacking]
+        profile.customGoalText = "Fast bowling pace and accuracy, multi-day backpacking under load, and dropping from 220 to 180 without losing strength."
         profile.dietaryPattern = .vegetarian
         profile.cuisinePreference = .southAsian
         profile.deficitIntensity = .maximum
@@ -244,7 +260,8 @@ extension UserProfile {
     enum CodingKeys: String, CodingKey {
         case id, appleUserIdentifier, name, age, sex, heightInches
         case currentWeightLbs, goalWeightLbs, goalDirection, deficitIntensity
-        case activityLevel, equipment, hasAppleWatch, fitnessGoals
+        case activityLevel, equipment, gymAssets, hasAppleWatch, fitnessGoals
+        case customGoalText, trainingBrief, likedRecipes
         case dietaryPattern, cuisinePreference, foodPreferences, allergies
         case mealsPerDay, wakeConstraintEarliest, toneIntensity, accentColor
         case accountabilityMode, weightHistory
@@ -266,8 +283,12 @@ extension UserProfile {
         deficitIntensity = try c.decodeIfPresent(DeficitIntensity.self, forKey: .deficitIntensity) ?? .aggressive
         activityLevel = try c.decode(ActivityLevel.self, forKey: .activityLevel)
         equipment = try c.decode([Equipment].self, forKey: .equipment)
+        gymAssets = try c.decodeIfPresent(Set<GymAsset>.self, forKey: .gymAssets) ?? []
         hasAppleWatch = try c.decode(Bool.self, forKey: .hasAppleWatch)
         fitnessGoals = try c.decode(Set<FitnessGoal>.self, forKey: .fitnessGoals)
+        customGoalText = try c.decodeIfPresent(String.self, forKey: .customGoalText) ?? ""
+        trainingBrief = try c.decodeIfPresent(TrainingBrief.self, forKey: .trainingBrief) ?? .empty
+        likedRecipes = try c.decodeIfPresent([LikedRecipe].self, forKey: .likedRecipes) ?? []
         dietaryPattern = try c.decode(DietaryPattern.self, forKey: .dietaryPattern)
         cuisinePreference = try c.decode(CuisinePreference.self, forKey: .cuisinePreference)
         foodPreferences = try c.decodeIfPresent(FoodPreferences.self, forKey: .foodPreferences) ?? .empty
@@ -279,6 +300,9 @@ extension UserProfile {
         accountabilityMode = try c.decode(Set<AccountabilityTrigger>.self, forKey: .accountabilityMode)
         weightHistory = try c.decode([WeightEntry].self, forKey: .weightHistory)
 
+        if gymAssets.isEmpty {
+            gymAssets = equipment.first?.defaultAssets ?? []
+        }
         if foodPreferences.cuisines.isEmpty, cuisinePreference != .noPreference {
             foodPreferences.cuisines = [cuisinePreference]
         }
@@ -301,8 +325,12 @@ extension UserProfile {
         try c.encode(deficitIntensity, forKey: .deficitIntensity)
         try c.encode(activityLevel, forKey: .activityLevel)
         try c.encode(equipment, forKey: .equipment)
+        try c.encode(gymAssets, forKey: .gymAssets)
         try c.encode(hasAppleWatch, forKey: .hasAppleWatch)
         try c.encode(fitnessGoals, forKey: .fitnessGoals)
+        try c.encode(customGoalText, forKey: .customGoalText)
+        try c.encode(trainingBrief, forKey: .trainingBrief)
+        try c.encode(likedRecipes, forKey: .likedRecipes)
         try c.encode(dietaryPattern, forKey: .dietaryPattern)
         try c.encode(cuisinePreference, forKey: .cuisinePreference)
         try c.encode(foodPreferences, forKey: .foodPreferences)

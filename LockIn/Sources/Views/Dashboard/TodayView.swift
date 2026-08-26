@@ -7,8 +7,20 @@ import SwiftUI
 struct TodayView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var calendarManager: CalendarManager
+    @EnvironmentObject var healthKitManager: HealthKitManager
+    @EnvironmentObject var screenTimeManager: ScreenTimeManager
     @Environment(\.accent) private var accent
     var onOpenProgressPhoto: () -> Void
+
+    @State private var weighInEvent: ScheduledEvent?
+    @State private var weighInText = ""
+    @State private var focusStartedMessage: String?
+    @State private var proofEvent: ScheduledEvent?
+    @State private var mealActionEvent: ScheduledEvent?
+    @State private var workoutModeEvent: ScheduledEvent?
+#if DEBUG
+    @ObservedObject private var lab = DevLabController.shared
+#endif
 
     var body: some View {
         ZStack {
@@ -17,7 +29,11 @@ struct TodayView: View {
             if let schedule = appState.todaySchedule {
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 24) {
-                        header
+#if DEBUG
+                        if lab.hasScheduleOverride || lab.forceLocalMeals {
+                            labBanner
+                        }
+#endif
                         if let event = appState.currentEvent {
                             HeroCard(
                                 event: event,
@@ -29,18 +45,119 @@ struct TodayView: View {
                         if let coach = appState.coachLine {
                             coachCallout(coach)
                         }
+                        if let focusStartedMessage {
+                            Text(focusStartedMessage)
+                                .font(.system(size: 12))
+                                .foregroundStyle(accent.color)
+                        }
                         vitals(schedule: schedule)
                         timeline(schedule: schedule)
                     }
                     .padding(.horizontal, Theme.gutter)
+                    .padding(.top, 4)
                     // Clears the floating tab bar so the last event isn't trapped under it.
                     .padding(.bottom, 96)
                 }
+                .pinnedHeader { header }
             } else {
-                ProgressView().tint(Theme.inkMuted)
+                VStack(spacing: 12) {
+                    ProgressView().tint(Theme.inkMuted)
+                    Text("Building today's plan…")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.inkMuted)
+                }
+            }
+        }
+        .alert("Morning weigh-in", isPresented: Binding(
+            get: { weighInEvent != nil },
+            set: { if !$0 { weighInEvent = nil } }
+        )) {
+            TextField("Weight (lb)", text: $weighInText)
+                .keyboardType(.decimalPad)
+            Button("Log") { submitWeighIn() }
+            Button("Cancel", role: .cancel) { weighInEvent = nil }
+        } message: {
+            Text("Same time, same conditions. This updates Health and recalculates today's macros.")
+        }
+        .sheet(item: $proofEvent) { event in
+            CheckInProofSheet(
+                event: event,
+                onVerified: {
+                    proofEvent = nil
+                    finishConfirm(event)
+                },
+                onOverride: {
+                    proofEvent = nil
+                    finishConfirm(event)
+                },
+                onCancel: { proofEvent = nil }
+            )
+        }
+        .confirmationDialog("Meal", isPresented: Binding(
+            get: { mealActionEvent != nil },
+            set: { if !$0 { mealActionEvent = nil } }
+        ), titleVisibility: .visible) {
+            Button("Swap for another recipe") {
+                if let event = mealActionEvent {
+                    let ok = appState.swapMeal(for: event)
+                    mealActionEvent = nil
+                    ok ? Haptics.confirm() : Haptics.miss()
+                }
+            }
+            Button("Save to my menu") {
+                if let event = mealActionEvent {
+                    appState.likeCurrentMeal(for: event)
+                    mealActionEvent = nil
+                    Haptics.confirm()
+                }
+            }
+            Button("Cancel", role: .cancel) { mealActionEvent = nil }
+        } message: {
+            Text(mealActionEvent?.title ?? "Change this meal")
+        }
+        .fullScreenCover(item: $workoutModeEvent) { event in
+            WorkoutModeView(session: todayWorkoutSession) {
+                workoutModeEvent = nil
+                // Guided session is the proof — skip the photo sheet.
+                finishConfirm(event)
             }
         }
     }
+
+    /// Rebuilds today's Hybrid PPL session from the live profile so Workout
+    /// Mode always matches the event detail ScheduleEngine wrote.
+    private var todayWorkoutSession: WorkoutSession {
+        WorkoutEngine.session(
+            for: Date(),
+            goals: appState.profile.fitnessGoals,
+            equipment: appState.profile.equipment,
+            assets: appState.profile.gymAssets,
+            brief: appState.profile.trainingBrief
+        )
+    }
+
+#if DEBUG
+    private var labBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "flask.fill")
+                .font(.system(size: 11, weight: .semibold))
+            Text(labBannerText)
+                .font(Theme.mono(11, weight: .semibold))
+                .tracking(Theme.labelTracking)
+                .textCase(.uppercase)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(Theme.signal)
+        .padding(.top, 4)
+    }
+
+    private var labBannerText: String {
+        var parts: [String] = ["Lab"]
+        if lab.hasScheduleOverride { parts.append("calendar override") }
+        if lab.forceLocalMeals { parts.append("local meals") }
+        return parts.joined(separator: " · ")
+    }
+#endif
 
     // MARK: - Header
 
@@ -49,12 +166,18 @@ struct TodayView: View {
             Text(Date(), format: .dateTime.weekday(.abbreviated).day().month(.abbreviated))
                 .ledgerLabel()
             Spacer()
-            Text("DAY \(appState.streak.currentStreakDays)")
-                .font(Theme.mono(11, weight: .semibold))
-                .tracking(Theme.labelTracking)
-                .foregroundStyle(appState.streak.currentStreakDays > 0 ? accent.color : Theme.inkMuted)
+            if appState.isRefreshingMeals {
+                Text("Fetching recipes…")
+                    .font(Theme.mono(11, weight: .semibold))
+                    .tracking(Theme.labelTracking)
+                    .foregroundStyle(Theme.inkMuted)
+            } else {
+                Text("DAY \(appState.streak.currentStreakDays)")
+                    .font(Theme.mono(11, weight: .semibold))
+                    .tracking(Theme.labelTracking)
+                    .foregroundStyle(appState.streak.currentStreakDays > 0 ? accent.color : Theme.inkMuted)
+            }
         }
-        .padding(.top, 8)
     }
 
     // MARK: - Coach callout
@@ -100,8 +223,34 @@ struct TodayView: View {
                 )
             }
             LedgerRule()
-            fuelRow(macros: schedule.macros)
+            fuelRow(schedule: schedule)
+            if screenTimeManager.isAuthorized {
+                focusRow
+            }
         }
+    }
+
+    private var focusRow: some View {
+        Button {
+            Haptics.tap()
+            if screenTimeManager.startFocusBlock(minutes: 45) != nil {
+                focusStartedMessage = "45-minute focus block started — guarded apps are shielded."
+            } else {
+                focusStartedMessage = "Pick guarded apps in Settings before starting a focus block."
+            }
+        } label: {
+            HStack {
+                Text("Start 45-min focus lock-in")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.ink)
+                Spacer()
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.inkMuted)
+            }
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
     }
 
     private func vital(label: String, value: String, detail: String, valueColor: Color = Theme.ink) -> some View {
@@ -117,21 +266,51 @@ struct TodayView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func fuelRow(macros: MacroTargets) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("Fuel").ledgerLabel()
-            Spacer()
-            Text("\(macros.calories)")
-                .font(Theme.mono(15, weight: .semibold))
-                .foregroundStyle(Theme.ink)
-            Text("kcal")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.inkMuted)
-            Text("P\(macros.proteinGrams)  F\(macros.fatGrams)  C\(macros.carbGrams)")
-                .font(Theme.mono(12))
-                .foregroundStyle(Theme.inkMuted)
-                .padding(.leading, 4)
+    /// Shows what today's meals actually add up to — not the target.
+    ///
+    /// These are two different numbers whenever the recipe pool can't reach the
+    /// protein goal, and showing the target here made a 130g day read as 180g.
+    /// The target stays visible underneath only when the plan misses it, so a
+    /// good day is one clean line and a bad day says so.
+    private func fuelRow(schedule: DaySchedule) -> some View {
+        let macros = schedule.macros
+        let planned = schedule.plannedMacros
+        let shortfall = schedule.proteinShortfall
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Fuel").ledgerLabel()
+                Spacer()
+                Text(schedule.mealSource.label)
+                    .font(Theme.mono(10, weight: .semibold))
+                    .tracking(Theme.labelTracking)
+                    .textCase(.uppercase)
+                    .foregroundStyle(schedule.mealSource == .spoonacular ? accent.color : Theme.inkMuted)
+                Text("\(Int((planned?.calories ?? Double(macros.calories)).rounded()))")
+                    .font(Theme.mono(15, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                Text("kcal")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.inkMuted)
+                Text(plannedMacroLine(planned: planned, macros: macros))
+                    .font(Theme.mono(12))
+                    .foregroundStyle(shortfall > 0 ? Theme.signal : Theme.inkMuted)
+                    .padding(.leading, 4)
+            }
+            if shortfall > 0 {
+                Text("\(shortfall)g under your \(macros.proteinGrams)g protein target — today's recipes couldn't reach it.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+    }
+
+    private func plannedMacroLine(planned: MacroTargetsLite?, macros: MacroTargets) -> String {
+        guard let planned else {
+            return "P\(macros.proteinGrams)  F\(macros.fatGrams)  C\(macros.carbGrams)"
+        }
+        return "P\(Int(planned.proteinG.rounded()))  F\(Int(planned.fatG.rounded()))  C\(Int(planned.carbG.rounded()))"
     }
 
     // MARK: - Timeline
@@ -155,12 +334,16 @@ struct TodayView: View {
                     event: event,
                     isCurrent: event.id == appState.currentEvent?.id,
                     onConfirm: { confirm(event) },
-                    onSkip: { skip(event) }
+                    onSkip: { skip(event) },
+                    onMealOptions: event.kind == .meal ? { mealActionEvent = event } : nil
                 )
                 .onTapGesture {
                     if event.kind == .progressPhoto {
                         Haptics.tap()
                         onOpenProgressPhoto()
+                    } else if event.kind == .meal {
+                        Haptics.tap()
+                        mealActionEvent = event
                     }
                 }
             }
@@ -170,12 +353,41 @@ struct TodayView: View {
     // MARK: - Actions
 
     private func confirm(_ event: ScheduledEvent) {
+        if event.kind == .weighIn {
+            weighInText = String(format: "%.1f", appState.profile.currentWeightLbs)
+            weighInEvent = event
+            return
+        }
+        if event.kind == .workout {
+            Haptics.tap()
+            workoutModeEvent = event
+            return
+        }
+        if CheckInVerifier.requiresProof(event.kind) {
+            proofEvent = event
+            return
+        }
+        finishConfirm(event)
+    }
+
+    private func finishConfirm(_ event: ScheduledEvent) {
         let before = appState.streak.currentStreakDays
         withAnimation(.snappy) { appState.confirm(event) }
         if event.kind == .task, let id = event.externalIdentifier {
             calendarManager.completeReminder(identifier: id)
         }
         appState.streak.currentStreakDays > before ? Haptics.milestone() : Haptics.confirm()
+    }
+
+    private func submitWeighIn() {
+        guard let event = weighInEvent else { return }
+        let value = Double(weighInText.replacingOccurrences(of: ",", with: "."))
+            ?? appState.profile.currentWeightLbs
+        withAnimation(.snappy) {
+            appState.applyWeighIn(pounds: value, event: event, healthKit: healthKitManager)
+        }
+        weighInEvent = nil
+        Haptics.confirm()
     }
 
     private func skip(_ event: ScheduledEvent) {
@@ -229,7 +441,7 @@ private struct HeroCard: View {
 
             HStack(spacing: 10) {
                 Button(action: onConfirm) {
-                    Text("Done")
+                    Text(primaryActionTitle)
                         .font(.system(size: 16, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
@@ -260,6 +472,14 @@ private struct HeroCard: View {
 
     private var isOverdue: Bool { now > event.time && event.status == .pending }
 
+    private var primaryActionTitle: String {
+        switch event.kind {
+        case .weighIn: return "Log weight"
+        case .workout: return "Start workout"
+        default: return "Done"
+        }
+    }
+
     private var relativeLine: String {
         let delta = event.time.timeIntervalSince(now)
         let minutes = abs(Int(delta / 60))
@@ -276,6 +496,7 @@ private struct TimelineRow: View {
     let isCurrent: Bool
     let onConfirm: () -> Void
     let onSkip: () -> Void
+    var onMealOptions: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -318,6 +539,9 @@ private struct TimelineRow: View {
                 .contextMenu {
                     Button("Mark as done", systemImage: "checkmark", action: onConfirm)
                     Button("Skip it", systemImage: "xmark", role: .destructive, action: onSkip)
+                    if event.kind == .meal, let onMealOptions {
+                        Button("Swap / save recipe", systemImage: "arrow.triangle.2.circlepath", action: onMealOptions)
+                    }
                 }
             }
         }

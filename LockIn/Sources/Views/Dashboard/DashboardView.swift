@@ -3,6 +3,7 @@ import SwiftUI
 /// Three surfaces, in the order they matter: what to do now, the record that
 /// proves you did it, and the controls. Tapping the "Progress photo" event on
 /// Today jumps straight into the camera rather than just switching tabs.
+/// DEBUG builds add a Lab tab for one-tap scenario testing.
 struct DashboardView: View {
     @State private var selectedTab = 0
     @State private var pendingCameraLaunch = false
@@ -45,6 +46,12 @@ struct DashboardView: View {
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
                 .tag(2)
+
+#if DEBUG
+            DevLabView()
+                .tabItem { Label("Lab", systemImage: "flask.fill") }
+                .tag(3)
+#endif
         }
         .tint(Theme.ink)
     }

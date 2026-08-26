@@ -95,13 +95,15 @@ enum Fixture {
     // MARK: - Recipes
 
     static func recipe(id: Int, title: String = "Recipe", calories: Double, protein: Double,
-                       fat: Double = 20, carbs: Double = 40, minutes: Int = 20) -> SpoonacularRecipe {
+                       fat: Double = 20, carbs: Double = 40, minutes: Int = 20,
+                       dishTypes: [String]? = nil) -> SpoonacularRecipe {
         SpoonacularRecipe(
             id: id,
             title: title,
             readyInMinutes: minutes,
             servings: 1,
             sourceUrl: nil,
+            dishTypes: dishTypes,
             nutrition: .init(nutrients: [
                 .init(name: "Calories", amount: calories, unit: "kcal"),
                 .init(name: "Protein", amount: protein, unit: "g"),

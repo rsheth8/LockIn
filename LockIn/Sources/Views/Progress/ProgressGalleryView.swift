@@ -23,16 +23,6 @@ struct ProgressGalleryView: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 30) {
-                    ScreenHeader(title: "Record", subtitle: "What you actually did") {
-                        Button(action: launchCamera) {
-                            Image(systemName: "camera.fill")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Theme.surface)
-                                .frame(width: 42, height: 42)
-                                .background(Theme.ink, in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                    }
                     promiseSection
                     weightSection
                     photoSection
@@ -41,6 +31,18 @@ struct ProgressGalleryView: View {
                 .padding(.top, 8)
                 // Clears the floating tab bar so the last row isn't trapped under it.
                 .padding(.bottom, 96)
+            }
+            .pinnedHeader {
+                ScreenHeader(title: "Record", subtitle: "What you actually did") {
+                    Button(action: launchCamera) {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Theme.surface)
+                            .frame(width: 42, height: 42)
+                            .background(Theme.ink, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .fullScreenCover(isPresented: $showingCamera) {

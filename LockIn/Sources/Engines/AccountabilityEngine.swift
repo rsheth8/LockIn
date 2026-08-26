@@ -8,14 +8,28 @@ import Foundation
 /// call out the action, not the person.
 enum AccountabilityEngine {
     /// tier: 0 = first miss reminder, 1 = still missed after grace window, 2 = repeated pattern this week.
-    static func message(for event: ScheduledEvent, tier: Int, tone: ToneIntensity, streak: StreakStatus) -> String {
+    static func message(for event: ScheduledEvent, tier: Int, tone: ToneIntensity, streak: StreakStatus,
+                        currentWeightLbs: Double? = nil, goalWeightLbs: Double? = nil) -> String {
+        let goals = GoalPhrase(current: currentWeightLbs, goal: goalWeightLbs)
         switch tone {
         case .gentle:
             return gentleMessage(event: event, tier: tier, streak: streak)
         case .toughLove:
-            return toughLoveMessage(event: event, tier: tier, streak: streak)
+            return toughLoveMessage(event: event, tier: tier, streak: streak, goals: goals)
         case .hardcore:
-            return hardcoreMessage(event: event, tier: tier, streak: streak)
+            return hardcoreMessage(event: event, tier: tier, streak: streak, goals: goals)
+        }
+    }
+
+    private struct GoalPhrase {
+        let current: Double?
+        let goal: Double?
+
+        var short: String {
+            guard let current, let goal, current > 0, goal > 0 else {
+                return "your goal weight"
+            }
+            return "\(Int(current.rounded())) to \(Int(goal.rounded()))"
         }
     }
 
@@ -27,7 +41,7 @@ enum AccountabilityEngine {
         }
     }
 
-    private static func toughLoveMessage(event: ScheduledEvent, tier: Int, streak: StreakStatus) -> String {
+    private static func toughLoveMessage(event: ScheduledEvent, tier: Int, streak: StreakStatus, goals: GoalPhrase) -> String {
         switch tier {
         case 0:
             return "\(event.title) was supposed to happen right now. Go do it."
@@ -37,18 +51,21 @@ enum AccountabilityEngine {
             if streak.currentStreakDays > 0 {
                 return "\(event.title) missed again. That's a \(streak.currentStreakDays)-day streak on the line — don't throw it away because it got inconvenient."
             }
-            return "\(event.title) missed again. 220 to 180 doesn't happen by accident, and it's not happening right now because you're not doing the work. Get back on schedule."
+            return "\(event.title) missed again. \(goals.short) doesn't happen by accident, and it's not happening right now because you're not doing the work. Get back on schedule."
         }
     }
 
-    private static func hardcoreMessage(event: ScheduledEvent, tier: Int, streak: StreakStatus) -> String {
+    private static func hardcoreMessage(event: ScheduledEvent, tier: Int, streak: StreakStatus, goals: GoalPhrase) -> String {
         switch tier {
         case 0:
             return "\(event.title). Now. Not in five minutes."
         case 1:
             return "Still nothing on \(event.title)? You wrote this schedule for a reason and you're already bailing on it."
         default:
-            return "\(event.title) blown off again. You're not going to wake up at 180 by accident — every skip like this is you choosing to stay exactly where you are. Move."
+            if let goal = goals.goal, goal > 0 {
+                return "\(event.title) blown off again. You're not going to wake up at \(Int(goal.rounded())) by accident — every skip like this is you choosing to stay exactly where you are. Move."
+            }
+            return "\(event.title) blown off again. You're not going to hit your goal by accident — every skip like this is you choosing to stay exactly where you are. Move."
         }
     }
 

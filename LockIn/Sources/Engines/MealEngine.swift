@@ -84,7 +84,7 @@ enum MealEngine {
         let dayOffset = Calendar.current.ordinality(of: .day, in: .era, for: date) ?? 0
         var used = Set<Int>()
 
-        return splits.enumerated().map { index, entry in
+        let assembled: [Meal] = splits.enumerated().map { index, entry in
             let (slot, fraction) = entry
             let targetCalories = Double(macros.calories) * fraction
             let targetProtein = Double(macros.proteinGrams) * fraction
@@ -133,9 +133,109 @@ enum MealEngine {
                         ? "Takes about \(recipe.readyInMinutes ?? 0) min — start early or batch it the night before."
                         : nil
                 ),
-                gramsToWeigh: (servings * 100).rounded()
+                gramsToWeigh: (servings * 100).rounded(),
+                unit: .servings
             )
             return Meal(slot: slot, name: recipe.title, components: [component], spoonacularID: recipe.id)
+        }
+        return reconcileProtein(assembled, macros: macros, profile: profile)
+    }
+
+    // MARK: - Protein reconciliation
+
+    /// Closes the gap between the protein the day's recipes actually deliver
+    /// and the 1g/lb target.
+    ///
+    /// Recipe selection can only pick from what the pool contains. A pool of
+    /// mainstream recipes scaled to a calorie share routinely lands 40–60g
+    /// under target — the day looks right on calories and quietly misses the
+    /// macro that actually protects lean mass during a deficit. Bolting protein
+    /// on top would blow the calorie budget, and shrinking portions alone would
+    /// take protein down with them, so both are solved together:
+    ///
+    ///     s·C + g·kc = targetCalories
+    ///     s·P + g·kp = targetProtein
+    ///
+    /// where `s` scales the recipe portions, `g` is grams of a diet-appropriate
+    /// protein supplement, and `kc`/`kp` are its calorie and protein density.
+    /// Both are clamped — a day needing more than ~100g of powder or a >40%
+    /// portion cut is a pool problem, not something to paper over, and the Fuel
+    /// row now shows the residual honestly rather than restating the target.
+    static func reconcileProtein(_ meals: [Meal], macros: MacroTargets, profile: UserProfile) -> [Meal] {
+        guard !meals.isEmpty else { return meals }
+
+        let current = meals.reduce(into: (calories: 0.0, protein: 0.0)) { acc, meal in
+            let m = meal.totalMacros
+            acc.calories += m.calories
+            acc.protein += m.proteinG
+        }
+        let targetCalories = Double(macros.calories)
+        let targetProtein = Double(macros.proteinGrams)
+
+        guard current.calories > 0 else { return meals }
+        // Already on target (or over) — leave a good day alone.
+        guard targetProtein - current.protein > proteinTolerance else { return meals }
+
+        let source = proteinTopUp(for: profile.dietaryPattern)
+        let kc = source.per100g.calories / 100.0
+        let kp = source.per100g.proteinG / 100.0
+
+        let ratio = current.protein / current.calories
+        let denominator = kp - kc * ratio
+        guard denominator > 0.01 else { return meals }
+
+        var grams = min(max((targetProtein - targetCalories * ratio) / denominator, 0), maxTopUpGrams)
+        var scale = (targetCalories - grams * kc) / current.calories
+
+        if scale > 1 {
+            // The joint solve wants to scale portions *up* — the pool came in
+            // under on calories as well as protein. Inflating what someone was
+            // told to eat to backfill a calorie gap is not this function's job
+            // (that's the recipe pool's problem, and the Fuel row reports it),
+            // so hold the portions and close the protein gap on its own terms.
+            scale = 1
+            grams = min(max((targetProtein - current.protein) / kp, 0), maxTopUpGrams)
+        } else {
+            scale = max(scale, minPortionScale)
+        }
+        guard grams >= 5 else { return meals }
+
+        // Split evenly across meals: 3–4 protein feedings beat one big one for
+        // muscle protein synthesis (Areta et al. 2013; Mamerow et al. 2014).
+        let perMeal = (grams / Double(meals.count)).rounded()
+        guard perMeal >= 5 else { return meals }
+
+        return meals.map { meal in
+            var updated = meal
+            updated.components = meal.components.map { component in
+                MealComponent(
+                    id: component.id,
+                    food: component.food,
+                    gramsToWeigh: (component.gramsToWeigh * scale).rounded(),
+                    unit: component.unit
+                )
+            }
+            updated.components.append(
+                MealComponent(food: source, gramsToWeigh: perMeal, unit: .grams)
+            )
+            return updated
+        }
+    }
+
+    /// Under-target by less than this is noise, not a gap worth acting on.
+    static let proteinTolerance: Double = 5
+    /// ~3 scoops of powder across the day. Past this the pool is the problem.
+    static let maxTopUpGrams: Double = 100
+    /// Never cut prescribed portions by more than 40% to make room.
+    static let minPortionScale: Double = 0.6
+
+    /// A weighable, diet-appropriate protein source. Deliberately a powder for
+    /// everyone but omnivores — it's the only thing dense enough to close a
+    /// 50g gap without adding another cooked component to the day.
+    static func proteinTopUp(for pattern: DietaryPattern) -> FoodItem {
+        switch pattern {
+        case .vegan: return FoodDatabase.peaProtein
+        case .vegetarian, .pescatarian, .omnivore: return FoodDatabase.whey
         }
     }
 
@@ -189,21 +289,84 @@ enum MealEngine {
     /// Built-in database, scaled in grams to hit the day's targets. Always
     /// available, works offline, no quota.
     static func buildDay(macros: MacroTargets, profile: UserProfile) -> [Meal] {
-        splits(mealsPerDay: profile.mealsPerDay).map { slot, fraction in
+        let meals = splits(mealsPerDay: profile.mealsPerDay).map { slot, fraction in
             buildMeal(
                 slot: slot,
                 calorieShare: Double(macros.calories) * fraction,
                 profile: profile
             )
         }
+        return reconcileProtein(meals, macros: macros, profile: profile)
+    }
+
+    /// Alternatives for a swap, excluding the meal the user just rejected.
+    /// Liked titles sort first so the personal menu actually gets used.
+    static func swapCandidates(excludingTitle: String, macros: MacroTargets,
+                               profile: UserProfile, preferredTitles: Set<String>,
+                               limit: Int = 6) -> [Meal] {
+        let perMealCalories = Double(macros.calories) / Double(max(profile.mealsPerDay, 1))
+        let slots = MealSlot.allCases
+        var results: [Meal] = []
+
+        for slot in slots {
+            let candidates = MealTemplate.all.filter {
+                $0.slot == slot
+                    && $0.isAllowed(for: profile)
+                    && $0.name.caseInsensitiveCompare(excludingTitle) != .orderedSame
+            }
+            let ranked = candidates.sorted { lhs, rhs in
+                let lPreferred = preferredTitles.contains(where: { $0.caseInsensitiveCompare(lhs.name) == .orderedSame })
+                let rPreferred = preferredTitles.contains(where: { $0.caseInsensitiveCompare(rhs.name) == .orderedSame })
+                if lPreferred != rPreferred { return lPreferred && !rPreferred }
+                return lhs.score(for: profile) > rhs.score(for: profile)
+            }
+            for template in ranked.prefix(2) {
+                results.append(buildMeal(from: template, calorieShare: perMealCalories))
+            }
+        }
+
+        // Also surface liked recipes as soft targets even if not in templates.
+        for liked in profile.likedRecipes where liked.title.caseInsensitiveCompare(excludingTitle) != .orderedSame {
+            if results.contains(where: { $0.name.caseInsensitiveCompare(liked.title) == .orderedSame }) { continue }
+            let stub = Meal(
+                slot: liked.slot ?? .lunch,
+                name: liked.title,
+                components: [
+                    MealComponent(
+                        food: FoodItem(
+                            name: liked.title,
+                            per100g: MacroTargetsLite(
+                                calories: liked.calories ?? perMealCalories,
+                                proteinG: liked.proteinG ?? 30,
+                                fatG: 15,
+                                carbG: 40
+                            )
+                        ),
+                        gramsToWeigh: 100
+                    )
+                ],
+                spoonacularID: liked.spoonacularID
+            )
+            results.insert(stub, at: 0)
+        }
+
+        return Array(results.prefix(limit))
     }
 
     private static func buildMeal(slot: MealSlot, calorieShare: Double, profile: UserProfile) -> Meal {
         let (name, template) = template(for: slot, profile: profile)
-        let baseCalories = template.reduce(0.0) { $0 + ($1.0.per100g.calories / 100.0) * $1.1 }
-        let scale = baseCalories > 0 ? calorieShare / baseCalories : 1
-        let components = template.map { food, grams in
-            MealComponent(food: food, gramsToWeigh: (grams * scale).rounded())
+        return scale(slot: slot, name: name, foods: template, calorieShare: calorieShare)
+    }
+
+    private static func buildMeal(from template: MealTemplate, calorieShare: Double) -> Meal {
+        scale(slot: template.slot, name: template.name, foods: template.foods, calorieShare: calorieShare)
+    }
+
+    private static func scale(slot: MealSlot, name: String, foods: [(FoodItem, Double)], calorieShare: Double) -> Meal {
+        let baseCalories = foods.reduce(0.0) { $0 + ($1.0.per100g.calories / 100.0) * $1.1 }
+        let factor = baseCalories > 0 ? calorieShare / baseCalories : 1
+        let components = foods.map { food, grams in
+            MealComponent(food: food, gramsToWeigh: (grams * factor).rounded())
         }
         return Meal(slot: slot, name: name, components: components)
     }

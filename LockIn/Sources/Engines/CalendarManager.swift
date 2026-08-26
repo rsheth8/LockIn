@@ -21,7 +21,10 @@ final class CalendarManager: ObservableObject {
     private var observer: NSObjectProtocol?
     private var debounceTask: Task<Void, Never>?
     private var lastFingerprint = ""
-    private var isWriting = false
+    /// Fingerprint of the last schedule written to the Lock In calendar, so a
+    /// rebuild that produces an identical day is a no-op instead of deleting
+    /// and re-creating a dozen EKEvents.
+    private var lastWrittenSchedule = ""
 
     deinit {
         if let observer { NotificationCenter.default.removeObserver(observer) }
@@ -128,10 +131,15 @@ final class CalendarManager: ObservableObject {
     /// of the phone (Calendar, Watch, Lock Screen) sees the same day.
     func sync(_ schedule: DaySchedule?) {
         guard authorized, let schedule else { return }
-        guard let lockIn = lockInCalendar() else { return }
 
-        isWriting = true
-        defer { isWriting = false }
+        // A launch rebuilds the day at least twice (local meals, then live
+        // ones), and every foreground or calendar change rebuilds it again.
+        // Without this, each pass deletes and re-creates every Lock In event —
+        // pointless churn that an iCloud-backed calendar then syncs upstream.
+        let fingerprint = Self.writeFingerprint(schedule)
+        guard fingerprint != lastWrittenSchedule else { return }
+
+        guard let lockIn = lockInCalendar() else { return }
 
         let calendar = Calendar.current
         guard let dayStart = calendar.date(bySettingHour: 0, minute: 0, second: 0, of: schedule.date),
@@ -153,12 +161,26 @@ final class CalendarManager: ObservableObject {
             try? store.save(event, span: .thisEvent, commit: false)
         }
         try? store.commit()
+        lastWrittenSchedule = fingerprint
+    }
+
+    /// Identifies a day's writable events by what would actually land in
+    /// EventKit — title, times, and notes.
+    static func writeFingerprint(_ schedule: DaySchedule) -> String {
+        schedule.events
+            .filter { $0.kind.writesToCalendar }
+            .map { "\($0.kind.rawValue)|\($0.title)|\($0.time.timeIntervalSince1970)|\($0.endTime.timeIntervalSince1970)|\($0.detail)" }
+            .joined(separator: ";")
     }
 
     // MARK: - Private
 
+    /// EventKit change pings arrive asynchronously and long after any write of
+    /// ours has returned, so there is no useful "am I writing right now" flag to
+    /// check. What actually keeps a write from rebuilding the day is that
+    /// `dayFingerprint` is computed from `busyBlocks`, which excludes the Lock
+    /// In calendar — our own events can never move it.
     private func noteStoreChanged() {
-        guard !isWriting else { return }
         debounceTask?.cancel()
         debounceTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(700))
@@ -213,9 +235,14 @@ final class CalendarManager: ObservableObject {
         }
     }
 
+    /// Where the Lock In calendar gets created. The account the user already
+    /// writes events to is the right answer — picking the first CalDAV source
+    /// instead could drop a personal training calendar into a work or school
+    /// account that happens to sync over CalDAV.
     private func preferredSource() -> EKSource? {
-        store.sources.first { $0.sourceType == .calDAV }
-            ?? store.defaultCalendarForNewEvents?.source
+        store.defaultCalendarForNewEvents?.source
+            ?? store.sources.first { $0.sourceType == .calDAV && $0.title.lowercased().contains("icloud") }
+            ?? store.sources.first { $0.sourceType == .calDAV }
             ?? store.sources.first { $0.sourceType == .local }
     }
 

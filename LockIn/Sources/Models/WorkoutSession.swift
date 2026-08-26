@@ -1,22 +1,28 @@
 import Foundation
 
 enum WorkoutFocus: String, Codable {
-    case lowerStrength      // squat/hinge patterns — base strength for bowling power + rucking durability
-    case upperPull          // pull/row/rotator-cuff — shoulder durability for bowling, pack-carrying posture
-    case rotationalPower    // med ball throws, cable rotations — bowling-specific power transfer
-    case sprintConditioning // repeat sprints/intervals — bowling run-up speed + match-day repeat efforts
-    case ruckEndurance      // weighted incline walking / stairs — direct backpacking specificity
-    case unilateralLegs     // step-ups, lunges, single-leg — trail stability, injury-proofing on descents
-    case core               // anti-rotation/anti-extension — lumbar stress protection for fast bowlers
-    case mobilityRecovery   // hips/shoulders/ankles/thoracic spine
+    case push               // horizontal/vertical press + triceps — PPL
+    case pull               // rows/pulldowns + rear delt — PPL
+    case legs               // squat/hinge/unilateral — PPL
+    case lowerStrength      // legacy alias kept for older saved schedules
+    case upperPull          // legacy
+    case rotationalPower    // bowling-specific power + sprint
+    case sprintConditioning // legacy sprint day
+    case ruckEndurance      // hike conditioning / zone 2
+    case unilateralLegs     // legacy
+    case core               // legacy
+    case mobilityRecovery
 
     var title: String {
         switch self {
+        case .push: return "Push (Chest / Shoulders / Tris)"
+        case .pull: return "Pull (Back / Rear Delts)"
+        case .legs: return "Legs (Squat / Hinge / Unilateral)"
         case .lowerStrength: return "Lower Body Strength"
         case .upperPull: return "Upper Pull + Shoulder Health"
-        case .rotationalPower: return "Rotational Power"
+        case .rotationalPower: return "Bowling Power + Sprint"
         case .sprintConditioning: return "Sprint Conditioning"
-        case .ruckEndurance: return "Rucking / Loaded Cardio"
+        case .ruckEndurance: return "Hike Conditioning / Zone 2"
         case .unilateralLegs: return "Unilateral Leg Strength"
         case .core: return "Core & Anti-Rotation"
         case .mobilityRecovery: return "Mobility & Recovery"
@@ -28,7 +34,7 @@ struct ExercisePrescription: Codable, Equatable, Identifiable {
     let id: UUID
     let name: String
     let sets: Int
-    let reps: String        // string to allow "8-10", "30s", "400m" etc.
+    let reps: String
     let note: String?
 
     init(id: UUID = UUID(), name: String, sets: Int, reps: String, note: String? = nil) {
@@ -43,7 +49,7 @@ struct ExercisePrescription: Codable, Equatable, Identifiable {
 struct WorkoutSession: Codable, Equatable, Identifiable {
     let id: UUID
     let focus: WorkoutFocus
-    let goalTags: [FitnessGoal]     // which goals this session serves, shown so the "why" is visible
+    let goalTags: [FitnessGoal]
     let exercises: [ExercisePrescription]
     let equipmentNote: String
 

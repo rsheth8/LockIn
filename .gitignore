@@ -10,3 +10,4 @@ LockIn/build/
 
 # API keys — never commit
 LockIn/Sources/Resources/Secrets.plist
+LockIn/BundleResources/Secrets.plist

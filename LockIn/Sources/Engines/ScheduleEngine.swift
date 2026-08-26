@@ -49,14 +49,24 @@ enum ScheduleEngine {
         occupy(&occupied, start: sleepPlan.targetBedTime, minutes: Int(sleepPlan.sleepDurationHours * 60))
 
         if let workoutTime = findWorkoutSlot(busyBlocks: busyBlocks, date: date) {
-            let session = WorkoutEngine.session(for: date, goals: profile.fitnessGoals)
+            let session = WorkoutEngine.session(
+                for: date,
+                goals: profile.fitnessGoals,
+                equipment: profile.equipment,
+                assets: profile.gymAssets,
+                brief: profile.trainingBrief
+            )
             let goalTagLine = session.goalTags.filter { profile.fitnessGoals.contains($0) }.map { $0.displayName }.joined(separator: " · ")
-            let detail = "\(session.summaryLine)\n\(session.equipmentNote)\nServes: \(goalTagLine)"
+            var detail = "\(session.summaryLine)\n\(session.equipmentNote)\nServes: \(goalTagLine)"
+            if !profile.trainingBrief.isEmpty {
+                detail += "\nBrief: \(profile.trainingBrief.summary)"
+            }
             events.append(ScheduledEvent(kind: .workout, title: session.focus.title, detail: detail, time: workoutTime, durationMinutes: 60, isCritical: true))
             occupy(&occupied, start: workoutTime, minutes: 60)
         }
 
         let meals = liveMeals ?? MealEngine.buildDay(macros: macros, profile: profile)
+        let mealSource: MealSource = liveMeals == nil ? .localDatabase : .spoonacular
         let mealWindows = mealWindows(for: date, wake: sleepPlan.targetWakeTime, windDown: sleepPlan.windDownStart)
         let mealDuration = 25
 
@@ -68,16 +78,20 @@ enum ScheduleEngine {
                 window: window.bounds,
                 occupied: occupied
             )
-            let macroLine = "\(Int(meal.totalMacros.calories))kcal · P\(Int(meal.totalMacros.proteinG)) F\(Int(meal.totalMacros.fatG)) C\(Int(meal.totalMacros.carbG))"
-            let componentLines = meal.components.map { "\(Int($0.gramsToWeigh))g \($0.food.name)" }.joined(separator: ", ")
             events.append(ScheduledEvent(
-                kind: .meal, title: meal.name, detail: "\(componentLines) — \(macroLine)",
-                time: start, durationMinutes: mealDuration, isCritical: true, linkedMealID: meal.id
+                kind: .meal, title: meal.name, detail: meal.detailLine,
+                time: start, durationMinutes: mealDuration, isCritical: true,
+                linkedMealID: meal.id, mealMacros: meal.totalMacros
             ))
             occupy(&occupied, start: start, minutes: mealDuration)
 
             if let prepAhead = meal.maxPrepAheadMinutes, prepAhead > 15 {
-                let prepTime = calendar.date(byAdding: .minute, value: -prepAhead, to: start)!
+                // A 12-hour soak would otherwise be scheduled for 2am. Anything
+                // that lands before you're up moves to just after wake, where
+                // it reads as "do this first thing" instead of a ping you slept
+                // through and a promise you broke while unconscious.
+                let earliest = calendar.date(byAdding: .minute, value: 10, to: sleepPlan.targetWakeTime)!
+                let prepTime = max(calendar.date(byAdding: .minute, value: -prepAhead, to: start)!, earliest)
                 let prepItems = meal.components.compactMap { c -> String? in
                     guard let instr = c.food.prepInstructions else { return nil }
                     return "\(c.food.name): \(instr)"
@@ -106,7 +120,7 @@ enum ScheduleEngine {
         events.append(ScheduledEvent(kind: .sleep, title: "Sleep", detail: "Lights out. Tomorrow starts now.", time: sleepPlan.targetBedTime, durationMinutes: Int(sleepPlan.sleepDurationHours * 60), isCritical: true))
 
         events.sort { $0.time < $1.time }
-        return DaySchedule(date: date, events: events, macros: macros, sleepPlan: sleepPlan)
+        return DaySchedule(date: date, events: events, macros: macros, sleepPlan: sleepPlan, mealSource: mealSource)
     }
 
     // MARK: - Meal windows

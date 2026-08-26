@@ -178,13 +178,19 @@ final class WorkoutEngineTests: XCTestCase {
     func testBowlingGoalAddsRotationalAndSprintWork() {
         let focuses = WorkoutEngine.weeklySplit(for: [.fatLoss, .fastBowling]).map(\.focus)
         XCTAssertTrue(focuses.contains(.rotationalPower))
-        XCTAssertTrue(focuses.contains(.sprintConditioning))
+        let bowling = WorkoutEngine.weeklySplit(for: [.fatLoss, .fastBowling])
+            .first { $0.focus == .rotationalPower }
+        XCTAssertTrue(bowling?.exercises.contains(where: { $0.name.lowercased().contains("sprint") }) == true)
     }
 
     func testHikingGoalAddsRuckingAndUnilateralWork() {
         let focuses = WorkoutEngine.weeklySplit(for: [.fatLoss, .hikingBackpacking]).map(\.focus)
         XCTAssertTrue(focuses.contains(.ruckEndurance))
-        XCTAssertTrue(focuses.contains(.unilateralLegs))
+        let hike = WorkoutEngine.weeklySplit(for: [.fatLoss, .hikingBackpacking])
+            .first { $0.focus == .ruckEndurance }
+        XCTAssertTrue(hike?.exercises.contains(where: {
+            $0.name.contains("Step") || $0.name.contains("Carry") || $0.name.contains("Split")
+        }) == true)
     }
 
     func testSportSessionsAreAbsentWithoutTheirGoal() {
@@ -219,5 +225,30 @@ final class WorkoutEngineTests: XCTestCase {
             // Purely an out-of-range guard — the modulo indexing has bitten before.
             _ = WorkoutEngine.session(for: date, goals: goals)
         }
+    }
+
+    func testHybridWeekdayMapIsCalendarAligned() {
+        // Mon Push · Tue Pull · Wed Legs · Thu bowling · Fri Push · Sat hike · Sun mobility
+        let goals: Set<FitnessGoal> = [.fatLoss, .fastBowling, .hikingBackpacking]
+        func focus(year: Int, month: Int, day: Int) -> WorkoutFocus {
+            let date = Calendar.current.date(from: DateComponents(year: year, month: month, day: day))!
+            return WorkoutEngine.session(for: date, goals: goals).focus
+        }
+        // 2026-08-24 is a Monday.
+        XCTAssertEqual(focus(year: 2026, month: 8, day: 24), .push)
+        XCTAssertEqual(focus(year: 2026, month: 8, day: 25), .pull)
+        XCTAssertEqual(focus(year: 2026, month: 8, day: 26), .legs)
+        XCTAssertEqual(focus(year: 2026, month: 8, day: 27), .rotationalPower)
+        XCTAssertEqual(focus(year: 2026, month: 8, day: 28), .push)
+        XCTAssertEqual(focus(year: 2026, month: 8, day: 29), .ruckEndurance)
+        XCTAssertEqual(focus(year: 2026, month: 8, day: 30), .mobilityRecovery)
+    }
+
+    func testFatLossOnlyWeekUsesMobilityAndPullOnSportDays() {
+        let focuses = WorkoutEngine.weeklySplit(for: [.fatLoss]).map(\.focus)
+        XCTAssertEqual(focuses[0], .push)   // Mon
+        XCTAssertEqual(focuses[3], .mobilityRecovery) // Thu — no bowling
+        XCTAssertEqual(focuses[5], .pull)   // Sat — Pull B instead of hike
+        XCTAssertEqual(focuses[6], .mobilityRecovery) // Sun
     }
 }

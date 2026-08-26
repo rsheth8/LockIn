@@ -7,6 +7,10 @@ struct RootView: View {
     @StateObject private var screenTimeManager = ScreenTimeManager()
     @StateObject private var accountManager = AccountManager()
     @Environment(\.scenePhase) private var scenePhase
+    @State private var scheduleRefresh = ScheduleRefreshTask()
+#if DEBUG
+    @ObservedObject private var lab = DevLabController.shared
+#endif
 
     var body: some View {
         Group {
@@ -33,10 +37,14 @@ struct RootView: View {
             guard accountManager.state != .signedOut else { return }
 
             if !appState.onboardingComplete {
-                await appState.restoreFromCloudIfAvailable()
+                // Only signed-in accounts restore from iCloud — local-only users
+                // must not skip the quiz because of a leftover cloud profile.
+                let allowCloud = accountManager.isSignedIn
+                await appState.restoreFromCloudIfAvailable(allowCloudRestore: allowCloud)
                 return
             }
 
+            accountManager.restoreGoogleSessionIfNeeded()
             appState.syncToneToMonitorExtension()
             appState.drainDistractionEvents()
             await calendarManager.requestAccess()
@@ -44,11 +52,18 @@ struct RootView: View {
             await appState.syncWeightIfDue(healthKit: healthKitManager)
 
             rebuildToday()
+            armMidnightRefresh()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 appState.drainDistractionEvents()
                 calendarManager.refreshIfNeeded()
+                if appState.onboardingComplete, accountManager.state != .signedOut {
+                    if ScheduleRefreshTask.isStale(appState.todaySchedule) {
+                        rebuildToday()
+                    }
+                    armMidnightRefresh()
+                }
             }
         }
         .onChange(of: planFingerprint) { _, _ in
@@ -60,6 +75,16 @@ struct RootView: View {
             guard !RuntimeEnvironment.isRunningUnitTests else { return }
             guard appState.onboardingComplete, accountManager.state != .signedOut else { return }
             rebuildToday()
+        }
+#if DEBUG
+        .onChange(of: lab.rebuildToken) { _, _ in
+            guard !RuntimeEnvironment.isRunningUnitTests else { return }
+            guard appState.onboardingComplete, accountManager.state != .signedOut else { return }
+            rebuildToday()
+        }
+#endif
+        .onDisappear {
+            scheduleRefresh.cancel()
         }
     }
 
@@ -80,22 +105,43 @@ struct RootView: View {
             profile.activityLevel.rawValue,
             profile.dietaryPattern.rawValue,
             String(profile.mealsPerDay),
+            profile.equipment.map(\.rawValue).sorted().joined(),
+            profile.gymAssets.map(\.rawValue).sorted().joined(),
             profile.fitnessGoals.map(\.rawValue).sorted().joined(),
             RecipeCache.signature(calories: 0, profile: profile)
         ].joined(separator: "/")
     }
 
+    private func armMidnightRefresh() {
+        scheduleRefresh.onMidnight = {
+            rebuildToday()
+        }
+        scheduleRefresh.arm()
+    }
+
     private func rebuildToday() {
+#if DEBUG
+        let busy = lab.overrideBusyBlocks ?? calendarManager.busyBlocks(for: Date())
+        let forceLocal = lab.forceLocalMeals
+#else
         let busy = calendarManager.busyBlocks(for: Date())
+        let forceLocal = false
+#endif
         let tasks = calendarManager.todayTasks
         appState.regenerateToday(calendarBusyBlocks: busy, tasks: tasks)
         publishSchedule()
+        appState.isRefreshingMeals = Secrets.hasSpoonacular && !forceLocal
         Task {
+            guard !forceLocal else {
+                await MainActor.run { appState.isRefreshingMeals = false }
+                return
+            }
             let macros = MetabolicEngine.dailyTargets(for: appState.profile)
             if let live = await MealEngine.liveMealsForToday(macros: macros, profile: appState.profile) {
                 appState.regenerateToday(calendarBusyBlocks: busy, tasks: tasks, liveMeals: live)
                 publishSchedule()
             }
+            await MainActor.run { appState.isRefreshingMeals = false }
         }
     }
 
@@ -106,7 +152,9 @@ struct RootView: View {
         NotificationManager.shared.scheduleDay(
             schedule,
             tone: appState.profile.toneIntensity,
-            streak: appState.streak
+            streak: appState.streak,
+            currentWeightLbs: appState.profile.currentWeightLbs,
+            goalWeightLbs: appState.profile.goalWeightLbs
         )
         calendarManager.sync(schedule)
         scheduleWorkoutLockInBlock()
