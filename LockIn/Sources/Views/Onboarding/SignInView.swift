@@ -11,6 +11,9 @@ import AuthenticationServices
 struct SignInView: View {
     @EnvironmentObject var accountManager: AccountManager
     @Environment(\.colorScheme) private var colorScheme
+#if DEBUG
+    @EnvironmentObject var appState: AppState
+#endif
 
     var body: some View {
         ZStack {
@@ -77,6 +80,27 @@ struct SignInView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
+
+#if DEBUG
+                Button {
+                    Haptics.tap()
+                    appState.startDemo()
+                } label: {
+                    Text("Watch the demo")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(Theme.surfaceMuted)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(Theme.rule, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 16)
+#endif
 
                 if let error = accountManager.lastError {
                     Text(error)

@@ -11,6 +11,17 @@ final class AppState: ObservableObject {
     /// Full adherence history, oldest first — backs the promise grid.
     @Published var dayRecords: [DayRecord] = []
 
+#if DEBUG
+    /// True while "Watch the demo" is running. RootView checks this before
+    /// the real sign-in/onboarding gates, so demo mode never touches — and
+    /// never depends on — the signed-in user's actual account state.
+    @Published var demoActive: Bool = false
+    /// Non-nil while the tour wants DashboardView to jump to a specific tab.
+    /// DashboardView consumes and clears it after switching.
+    @Published var demoTabRequest: Int?
+    let demoTour = DemoTourController()
+#endif
+
     private let store = PersistenceStore.shared
 
     init() {
@@ -254,6 +265,39 @@ final class AppState: ObservableObject {
         profile.weightHistory = []
         store.saveDayRecords([])
         store.saveProfile(profile)
+    }
+
+    /// Entry point for "Watch the demo" on the sign-in screen. Builds a
+    /// fully-seeded session entirely in memory — nothing here touches
+    /// `PersistenceStore`, so exiting the demo leaves the real account (if
+    /// any) exactly as it was.
+    func startDemo() {
+        var demoProfile = UserProfile.rahilPreset
+        let seeded = DebugSeed.dayRecords()
+        demoProfile.weightHistory = DebugSeed.weightHistory(from: seeded)
+        if let latest = demoProfile.weightHistory.last {
+            demoProfile.currentWeightLbs = latest.weightLbs
+        }
+
+        profile = demoProfile
+        dayRecords = seeded
+        streak = DemoMode.streak
+        todaySchedule = DemoMode.todaySchedule(profile: demoProfile)
+        onboardingComplete = true
+        demoTour.stepIndex = 0
+        demoTabRequest = 0
+        demoActive = true
+    }
+
+    /// Backs out of the demo. Real persisted state was never touched, so the
+    /// app falls straight back to whatever `RootView` would otherwise show.
+    func exitDemo() {
+        demoActive = false
+        profile = store.loadProfile() ?? UserProfile.blank
+        onboardingComplete = store.loadProfile() != nil
+        streak = store.loadStreak() ?? StreakStatus()
+        dayRecords = store.loadDayRecords()
+        todaySchedule = store.loadSchedule()
     }
 #endif
 

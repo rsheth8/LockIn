@@ -10,17 +10,19 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            switch (accountManager.state, appState.onboardingComplete) {
-            case (.signedOut, _):
-                SignInView()
-            case (_, false):
-                QuizFlowView()
-            case (_, true):
+#if DEBUG
+            if appState.demoActive {
                 DashboardView()
                     .environmentObject(calendarManager)
                     .environmentObject(healthKitManager)
                     .environmentObject(screenTimeManager)
+                    .overlay(alignment: .bottom) { DemoTourOverlay(tour: appState.demoTour) }
+            } else {
+                mainFlow
             }
+#else
+            mainFlow
+#endif
         }
         .environmentObject(accountManager)
         // The whole tree reads the accent from the environment, so a change in
@@ -31,6 +33,12 @@ struct RootView: View {
             // a test run would trigger real permission prompts and network calls.
             guard !RuntimeEnvironment.isRunningUnitTests else { return }
             guard accountManager.state != .signedOut else { return }
+#if DEBUG
+            // The demo is a self-contained, in-memory session — it must never
+            // fire real permission prompts, network calls, or overwrite the
+            // seeded schedule with a freshly generated one.
+            guard !appState.demoActive else { return }
+#endif
 
             if !appState.onboardingComplete {
                 await appState.restoreFromCloudIfAvailable()
@@ -66,6 +74,21 @@ struct RootView: View {
     /// Re-runs setup when the account changes or onboarding finishes.
     private var taskKey: String {
         "\(accountManager.state)-\(appState.onboardingComplete)"
+    }
+
+    @ViewBuilder
+    private var mainFlow: some View {
+        switch (accountManager.state, appState.onboardingComplete) {
+        case (.signedOut, _):
+            SignInView()
+        case (_, false):
+            QuizFlowView()
+        case (_, true):
+            DashboardView()
+                .environmentObject(calendarManager)
+                .environmentObject(healthKitManager)
+                .environmentObject(screenTimeManager)
+        }
     }
 
     /// Registers today's workout window as a guarded lock-in block, if Screen

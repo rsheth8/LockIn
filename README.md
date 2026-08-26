@@ -107,6 +107,19 @@ Two things worth knowing if you add tests:
   realistic adherence data, for reviewing the grid and charts against
   something other than an empty state.
 
+## Demo mode
+
+The sign-in screen has a DEBUG-only "Watch the demo" button
+(`Sources/Engines/DemoMode.swift`, `Sources/Views/Demo/DemoTourOverlay.swift`)
+that seeds a full session in memory — Rahil's preset profile, ~4 months of
+promise-grid history, and today's schedule with a realistic mix of
+confirmed/pending/missed events — then walks a 9-step guided tour across all
+three tabs (Today, Record, Settings), switching tabs automatically as it
+narrates each feature. It never touches `PersistenceStore`, so "Exit demo"
+(available on every step) drops straight back to the real sign-in/account
+state with nothing overwritten. Debug builds only — stripped entirely from
+release.
+
 ## Project structure note
 
 `LockInMonitor` (`LockIn/MonitorExtension/`) is a separate app-extension

@@ -6,6 +6,9 @@ import SwiftUI
 struct DashboardView: View {
     @State private var selectedTab = 0
     @State private var pendingCameraLaunch = false
+#if DEBUG
+    @EnvironmentObject var appState: AppState
+#endif
 
     init() {
         // The Ledger stays dark-forward and quiet — the system chrome shouldn't
@@ -47,5 +50,18 @@ struct DashboardView: View {
                 .tag(2)
         }
         .tint(Theme.ink)
+#if DEBUG
+        .onChange(of: appState.demoTabRequest) { _, requested in
+            guard let requested else { return }
+            selectedTab = requested
+            appState.demoTabRequest = nil
+        }
+        .onAppear {
+            if let requested = appState.demoTabRequest {
+                selectedTab = requested
+                appState.demoTabRequest = nil
+            }
+        }
+#endif
     }
 }
