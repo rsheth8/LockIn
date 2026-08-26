@@ -10,6 +10,11 @@ final class AppState: ObservableObject {
     @Published var onboardingComplete: Bool
     /// Full adherence history, oldest first — backs the promise grid.
     @Published var dayRecords: [DayRecord] = []
+    /// Meals eaten off-plan, either logged ad-hoc or swapped in for a
+    /// scheduled meal. Kept separate from `todaySchedule` because the schedule
+    /// is regenerated from the plan each launch and these are facts about what
+    /// actually happened.
+    @Published var loggedMeals: [LoggedMeal] = []
 
 #if DEBUG
     /// True while "Watch the demo" is running. RootView checks this before
@@ -29,6 +34,7 @@ final class AppState: ObservableObject {
         self.onboardingComplete = store.loadProfile() != nil
         self.streak = store.loadStreak() ?? StreakStatus()
         self.dayRecords = store.loadDayRecords()
+        self.loggedMeals = store.loadLoggedMeals()
     }
 
     /// Pulls an existing plan out of the signed-in user's private iCloud —
@@ -142,6 +148,50 @@ final class AppState: ObservableObject {
         onboardingComplete = true
         syncToneToMonitorExtension()
         pushToCloud()
+    }
+
+    // MARK: - Off-plan meals
+
+    /// Today's off-plan entries, in the order they were logged.
+    var loggedMealsToday: [LoggedMeal] {
+        let key = DayRecord.key(for: Date())
+        return loggedMeals.filter { $0.dayKey == key }
+    }
+
+    /// Calories and macros actually consumed today from off-plan meals, shown
+    /// against the day's targets so the Fuel row reflects reality rather than
+    /// just the plan.
+    var loggedMacrosToday: MacroTargetsLite {
+        loggedMealsToday.reduce(MacroTargetsLite(calories: 0, proteinG: 0, fatG: 0, carbG: 0)) { total, meal in
+            MacroTargetsLite(
+                calories: total.calories + meal.macros.calories,
+                proteinG: total.proteinG + meal.macros.proteinG,
+                fatG: total.fatG + meal.macros.fatG,
+                carbG: total.carbG + meal.macros.carbG
+            )
+        }
+    }
+
+    /// Records an off-plan meal.
+    ///
+    /// When it replaces a scheduled meal, that event is marked **confirmed**,
+    /// not missed. The streak tracks whether you followed through on eating a
+    /// planned meal, not whether you hit the exact grams — swapping dal for a
+    /// shawarma is a different meal, not a broken promise. Blowing the meal off
+    /// entirely is still a miss, via Skip.
+    func log(_ meal: LoggedMeal) {
+        loggedMeals.append(meal)
+        store.saveLoggedMeals(loggedMeals)
+
+        if let eventID = meal.replacedEventID,
+           let event = todaySchedule?.events.first(where: { $0.id == eventID }) {
+            confirm(event)
+        }
+    }
+
+    func deleteLoggedMeal(_ meal: LoggedMeal) {
+        loggedMeals.removeAll { $0.id == meal.id }
+        store.saveLoggedMeals(loggedMeals)
     }
 
     // MARK: - Screen Time distraction events

@@ -9,6 +9,18 @@ struct TodayView: View {
     @Environment(\.accent) private var accent
     var onOpenProgressPhoto: () -> Void
 
+    /// Non-nil while the log sheet is up. Carries the event being swapped, or
+    /// `.adHoc` for the always-available entry point.
+    @State private var logTarget: LogTarget?
+
+    /// Identifiable wrapper so `.sheet(item:)` can drive both entry points
+    /// through one presentation.
+    private struct LogTarget: Identifiable {
+        let event: ScheduledEvent?
+        var id: String { event?.id.uuidString ?? "ad-hoc" }
+        static let adHoc = LogTarget(event: nil)
+    }
+
     var body: some View {
         ZStack {
             Theme.ground.ignoresSafeArea()
@@ -22,6 +34,9 @@ struct TodayView: View {
                                 event: event,
                                 onConfirm: { confirm(event) },
                                 onSkip: { skip(event) },
+                                onAteSomethingElse: event.kind == .meal
+                                    ? { logTarget = LogTarget(event: event) }
+                                    : nil,
                                 onTapDetail: { if event.kind == .progressPhoto { onOpenProgressPhoto() } }
                             )
                         }
@@ -29,6 +44,9 @@ struct TodayView: View {
                             coachCallout(coach)
                         }
                         vitals(schedule: schedule)
+                        if !appState.loggedMealsToday.isEmpty {
+                            loggedMealsSection
+                        }
                         timeline(schedule: schedule)
                     }
                     .padding(.horizontal, Theme.gutter)
@@ -37,6 +55,11 @@ struct TodayView: View {
                 }
             } else {
                 ProgressView().tint(Theme.inkMuted)
+            }
+        }
+        .sheet(item: $logTarget) { target in
+            LogMealView(replacingEvent: target.event) { meal in
+                withAnimation(.snappy) { appState.log(meal) }
             }
         }
     }
@@ -48,12 +71,77 @@ struct TodayView: View {
             Text(Date(), format: .dateTime.weekday(.abbreviated).day().month(.abbreviated))
                 .ledgerLabel()
             Spacer()
+            // Always reachable — eating off-plan is the common case, and it
+            // shouldn't require finding the right meal row first.
+            Button {
+                Haptics.tap()
+                logTarget = .adHoc
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("LOG A MEAL")
+                        .font(Theme.mono(10, weight: .semibold))
+                        .tracking(Theme.labelTracking)
+                }
+                .foregroundStyle(Theme.inkMuted)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .overlay(
+                    Capsule().strokeBorder(Theme.rule, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
             Text("DAY \(appState.streak.currentStreakDays)")
                 .font(Theme.mono(11, weight: .semibold))
                 .tracking(Theme.labelTracking)
                 .foregroundStyle(appState.streak.currentStreakDays > 0 ? accent.color : Theme.inkMuted)
+                .padding(.leading, 10)
         }
         .padding(.top, 8)
+    }
+
+    // MARK: - Off-plan meals
+
+    /// What was actually eaten outside the plan today, with its macro cost.
+    private var loggedMealsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Off plan").ledgerLabel()
+                Spacer()
+                let logged = appState.loggedMacrosToday
+                Text("+\(Int(logged.calories.rounded())) kcal")
+                    .font(Theme.mono(11, weight: .semibold))
+                    .foregroundStyle(Theme.inkMuted)
+            }
+            .padding(.bottom, 10)
+
+            ForEach(appState.loggedMealsToday) { meal in
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: meal.identifiedFromPhoto ? "camera.fill" : "square.and.pencil")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.inkFaint)
+                        .frame(width: 16)
+                        .padding(.top, 3)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(meal.name)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Theme.ink)
+                        Text("\(meal.portionDescription) · \(Int(meal.macros.calories.rounded()))kcal · P\(Int(meal.macros.proteinG.rounded())) F\(Int(meal.macros.fatG.rounded())) C\(Int(meal.macros.carbG.rounded()))")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+                .contextMenu {
+                    Button("Remove", systemImage: "trash", role: .destructive) {
+                        withAnimation(.snappy) { appState.deleteLoggedMeal(meal) }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Coach callout
@@ -143,7 +231,10 @@ struct TodayView: View {
                     event: event,
                     isCurrent: event.id == appState.currentEvent?.id,
                     onConfirm: { confirm(event) },
-                    onSkip: { skip(event) }
+                    onSkip: { skip(event) },
+                    onAteSomethingElse: event.kind == .meal
+                        ? { logTarget = LogTarget(event: event) }
+                        : nil
                 )
                 .onTapGesture {
                     if event.kind == .progressPhoto {
@@ -175,6 +266,8 @@ private struct HeroCard: View {
     let event: ScheduledEvent
     let onConfirm: () -> Void
     let onSkip: () -> Void
+    /// Only set for meals — nothing else has a meaningful substitute.
+    let onAteSomethingElse: (() -> Void)?
     let onTapDetail: () -> Void
 
     /// Live countdown so the card feels present rather than static.
@@ -236,6 +329,19 @@ private struct HeroCard: View {
             }
             .buttonStyle(.plain)
             .padding(.top, 22)
+
+            // Third path for meals: you ate, just not this. Kept visually
+            // quieter than Done/Skip so the planned meal stays the default.
+            if let onAteSomethingElse {
+                Button(action: onAteSomethingElse) {
+                    Text("Ate something else")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Theme.inkMuted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 12)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -261,6 +367,7 @@ private struct TimelineRow: View {
     let isCurrent: Bool
     let onConfirm: () -> Void
     let onSkip: () -> Void
+    let onAteSomethingElse: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -303,6 +410,9 @@ private struct TimelineRow: View {
                 .buttonStyle(.plain)
                 .contextMenu {
                     Button("Mark as done", systemImage: "checkmark", action: onConfirm)
+                    if let onAteSomethingElse {
+                        Button("Ate something else", systemImage: "camera", action: onAteSomethingElse)
+                    }
                     Button("Skip it", systemImage: "xmark", role: .destructive, action: onSkip)
                 }
             }

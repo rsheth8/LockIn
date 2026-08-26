@@ -111,6 +111,41 @@ actor SpoonacularClient {
         return try JSONDecoder().decode(SpoonacularSearchResponse.self, from: data).results
     }
 
+    /// Estimated nutrition for a dish given only its name.
+    ///
+    /// This is the one source that handles *cooked dishes* well — label
+    /// databases are built around packaged products, so "chicken biryani"
+    /// finds nothing useful there while this returns a plausible estimate.
+    /// Values are per serving, not per 100g, and Spoonacular gives no serving
+    /// weight, which is why `NutritionFacts` carries an explicit basis.
+    ///
+    /// Costs one quota point per call, so `NutritionLookup` only reaches it
+    /// after the free sources have missed.
+    func guessNutrition(title: String) async throws -> NutritionFacts? {
+        guard let key = Secrets.spoonacularKey else { throw ClientError.missingKey }
+        var components = URLComponents(string: "\(host)/recipes/guessNutrition")!
+        components.queryItems = [
+            .init(name: "title", value: title),
+            .init(name: "apiKey", value: key)
+        ]
+
+        let data = try await get(components.url!)
+        let guess = try JSONDecoder().decode(SpoonacularNutritionGuess.self, from: data)
+        guard guess.calories.value > 0 else { return nil }
+
+        return NutritionFacts(
+            name: title,
+            reference: MacroTargetsLite(
+                calories: guess.calories.value,
+                proteinG: guess.protein.value,
+                fatG: guess.fat.value,
+                carbG: guess.carbs.value
+            ),
+            basis: .perServing,
+            source: .spoonacularEstimate
+        )
+    }
+
     /// Full detail including ingredient amounts, for the recipe sheet.
     func recipe(id: Int) async throws -> SpoonacularRecipeDetail {
         guard let key = Secrets.spoonacularKey else { throw ClientError.missingKey }
@@ -181,6 +216,43 @@ struct SpoonacularRecipe: Codable, Equatable, Identifiable {
 
     /// Anything that takes real time gets a prep-ahead reminder scheduled.
     var needsPrepAhead: Bool { (readyInMinutes ?? 0) > 30 }
+}
+
+/// Response from `guessNutrition` — each macro arrives as its own object with
+/// a value and confidence range.
+struct SpoonacularNutritionGuess: Codable, Equatable {
+    let calories: Amount
+    let carbs: Amount
+    let fat: Amount
+    let protein: Amount
+
+    /// Spoonacular returns these as `{"value": 350, "unit": "calories"}` for
+    /// calories but `{"value": "12g", "unit": "g"}` shapes vary by field, so
+    /// the value is decoded leniently from either a number or a string with a
+    /// trailing unit.
+    struct Amount: Codable, Equatable {
+        let value: Double
+
+        private enum CodingKeys: String, CodingKey { case value }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if let number = try? container.decode(Double.self, forKey: .value) {
+                value = number
+            } else if let text = try? container.decode(String.self, forKey: .value) {
+                value = Double(text.trimmingCharacters(in: CharacterSet(charactersIn: "0123456789.").inverted)) ?? 0
+            } else {
+                value = 0
+            }
+        }
+
+        init(value: Double) { self.value = value }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(value, forKey: .value)
+        }
+    }
 }
 
 struct SpoonacularRecipeDetail: Codable, Equatable {

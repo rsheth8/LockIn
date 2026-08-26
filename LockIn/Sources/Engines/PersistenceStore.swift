@@ -8,7 +8,7 @@ final class PersistenceStore {
     private let defaults = UserDefaults.standard
 
     private enum Key: String {
-        case profile, schedule, streak, progressPhotos, dayRecords
+        case profile, schedule, streak, progressPhotos, dayRecords, loggedMeals
     }
 
     func saveProfile(_ profile: UserProfile) {
@@ -41,6 +41,17 @@ final class PersistenceStore {
 
     func loadProgressPhotos() -> [ProgressPhoto] {
         load([ProgressPhoto].self, key: .progressPhotos) ?? []
+    }
+
+    /// Off-plan meals. Small by construction — each entry is a name, a portion
+    /// string and four numbers, with no image data — so these stay cheap to
+    /// keep indefinitely alongside the rest of the JSON state.
+    func saveLoggedMeals(_ meals: [LoggedMeal]) {
+        save(meals, key: .loggedMeals)
+    }
+
+    func loadLoggedMeals() -> [LoggedMeal] {
+        load([LoggedMeal].self, key: .loggedMeals) ?? []
     }
 
     func saveDayRecords(_ records: [DayRecord]) {
