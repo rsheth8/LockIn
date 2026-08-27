@@ -23,6 +23,8 @@ struct ExerciseHistoryView: View {
     /// Full history, for dating each log.
     let workouts: [CompletedWorkout]
 
+    @State private var showingGuide = false
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -39,10 +41,26 @@ struct ExerciseHistoryView: View {
             .navigationTitle(exerciseName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if ExerciseLibrary.guide(for: exerciseName) != nil {
+                        Button {
+                            Haptics.tap()
+                            showingGuide = true
+                        } label: {
+                            Image(systemName: "questionmark.circle")
+                                .foregroundStyle(accent.color)
+                        }
+                        .accessibilityLabel("How to do \(exerciseName)")
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                         .foregroundStyle(Theme.inkMuted)
                 }
+            }
+            .sheet(isPresented: $showingGuide) {
+                ExerciseGuideView(exerciseName: exerciseName, prescription: nil,
+                                  guide: ExerciseLibrary.guide(for: exerciseName))
             }
         }
     }

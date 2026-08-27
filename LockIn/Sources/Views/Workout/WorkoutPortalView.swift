@@ -22,6 +22,8 @@ struct WorkoutPortalView: View {
     let onProgress: (WorkoutProgress) -> Void
 
     @State private var showingQuitConfirm = false
+    /// The exercise whose how-to guide is open.
+    @State private var guideFor: ExercisePrescription?
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     init(session: WorkoutSession, eventID: UUID, dayKey: String,
@@ -64,6 +66,13 @@ struct WorkoutPortalView: View {
         // screen, so it gets a haptic rather than only a visual change.
         .onChange(of: runner.phase) { previous, current in
             if previous == .resting && current == .working { Haptics.milestone() }
+        }
+        .sheet(item: $guideFor) { exercise in
+            ExerciseGuideView(
+                exerciseName: exercise.name,
+                prescription: "\(exercise.sets) × \(exercise.reps)",
+                guide: ExerciseLibrary.guide(for: exercise.name)
+            )
         }
         .confirmationDialog("Leave the workout?", isPresented: $showingQuitConfirm, titleVisibility: .visible) {
             Button("Save and leave") { dismiss() }
@@ -144,8 +153,32 @@ struct WorkoutPortalView: View {
     private var currentExerciseCard: some View {
         if let exercise = runner.currentExercise {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Exercise \(runner.exerciseIndex + 1) of \(runner.session.exercises.count)")
-                    .ledgerLabel()
+                HStack(alignment: .top) {
+                    Text("Exercise \(runner.exerciseIndex + 1) of \(runner.session.exercises.count)")
+                        .ledgerLabel()
+                    Spacer()
+                    // Being unsure how to do the movement is exactly the moment
+                    // you're standing still in a gym, so this is a single tap
+                    // from the card rather than buried behind a long-press.
+                    Button {
+                        Haptics.tap()
+                        guideFor = exercise
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "questionmark.circle")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("How to")
+                                .font(Theme.mono(10, weight: .semibold))
+                                .tracking(Theme.labelTracking)
+                        }
+                        .foregroundStyle(accent.color)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .overlay(Capsule().strokeBorder(accent.color.opacity(0.4), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("How to do \(exercise.name)")
+                }
 
                 Text(exercise.name)
                     .font(.system(size: 26, weight: .bold))
@@ -278,6 +311,13 @@ struct WorkoutPortalView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // Reachable for any exercise, not just the current one — useful
+                // when you're deciding whether to reorder around a busy rack.
+                .contextMenu {
+                    Button("How to do it", systemImage: "questionmark.circle") {
+                        guideFor = exercise
+                    }
+                }
             }
 
             Text(runner.session.equipmentNote)
