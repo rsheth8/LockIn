@@ -34,9 +34,15 @@ final class WorkoutRunnerTests: XCTestCase {
     }
 
     private func makeRunner(_ session: WorkoutSession? = nil,
+                            history: [CompletedWorkout] = [],
                             resuming: WorkoutProgress? = nil) -> WorkoutRunner {
         WorkoutRunner(session: session ?? self.session, eventID: eventID,
-                      dayKey: dayKey, resuming: resuming)
+                      dayKey: dayKey, history: history, resuming: resuming)
+    }
+
+    /// `n` anonymous completed sets, for building resume fixtures.
+    static func sets(_ n: Int) -> [SetEntry] {
+        (0..<n).map { _ in SetEntry() }
     }
 
     // MARK: Set progression
@@ -197,14 +203,14 @@ final class WorkoutRunnerTests: XCTestCase {
         var latest: WorkoutProgress?
         runner.onProgress = { latest = $0 }
         runner.completeSet()
-        XCTAssertEqual(latest?.completedSets, [1, 0])
+        XCTAssertEqual(latest?.loggedSets.map(\.count), [1, 0])
         XCTAssertEqual(latest?.eventID, eventID)
         XCTAssertEqual(latest?.dayKey, dayKey)
     }
 
     func testResumingRestoresThePlaceInTheSession() {
         let saved = WorkoutProgress(eventID: eventID, dayKey: dayKey,
-                                    completedSets: [3, 1], exerciseIndex: 1, elapsedSeconds: 400)
+                                    loggedSets: [Self.sets(3), Self.sets(1)], exerciseIndex: 1, elapsedSeconds: 400)
         let runner = makeRunner(resuming: saved)
         XCTAssertEqual(runner.setsDone, 4)
         XCTAssertEqual(runner.exerciseIndex, 1)
@@ -214,38 +220,185 @@ final class WorkoutRunnerTests: XCTestCase {
 
     func testProgressFromAnotherEventIsIgnored() {
         let saved = WorkoutProgress(eventID: UUID(), dayKey: dayKey,
-                                    completedSets: [3, 2], exerciseIndex: 1, elapsedSeconds: 900)
+                                    loggedSets: [Self.sets(3), Self.sets(2)], exerciseIndex: 1, elapsedSeconds: 900)
         XCTAssertEqual(makeRunner(resuming: saved).setsDone, 0)
     }
 
     func testProgressFromAnotherDayIsIgnored() {
         let saved = WorkoutProgress(eventID: eventID, dayKey: "2026-09-13",
-                                    completedSets: [3, 2], exerciseIndex: 1, elapsedSeconds: 900)
+                                    loggedSets: [Self.sets(3), Self.sets(2)], exerciseIndex: 1, elapsedSeconds: 900)
         XCTAssertEqual(makeRunner(resuming: saved).setsDone, 0)
     }
 
     /// A schedule rebuild can change the exercise list under a saved record.
     func testProgressForADifferentSessionShapeIsIgnored() {
         let saved = WorkoutProgress(eventID: eventID, dayKey: dayKey,
-                                    completedSets: [2, 2, 2], exerciseIndex: 2, elapsedSeconds: 300)
+                                    loggedSets: [Self.sets(2), Self.sets(2), Self.sets(2)], exerciseIndex: 2, elapsedSeconds: 300)
         XCTAssertEqual(makeRunner(resuming: saved).setsDone, 0)
     }
 
     func testResumedCountsAreClampedToThePrescription() {
         let saved = WorkoutProgress(eventID: eventID, dayKey: dayKey,
-                                    completedSets: [99, -4], exerciseIndex: 0, elapsedSeconds: 10)
+                                    loggedSets: [Self.sets(99), []], exerciseIndex: 0, elapsedSeconds: 10)
         let runner = makeRunner(resuming: saved)
-        XCTAssertEqual(runner.completedSets, [3, 0])
+        XCTAssertEqual(runner.loggedSets.map(\.count), [3, 0])
         XCTAssertLessThanOrEqual(runner.fraction, 1.0)
     }
 
     func testResumingACompletedSessionOpensOnTheSummary() {
         let saved = WorkoutProgress(eventID: eventID, dayKey: dayKey,
-                                    completedSets: [3, 2], exerciseIndex: 1, elapsedSeconds: 2000)
+                                    loggedSets: [Self.sets(3), Self.sets(2)], exerciseIndex: 1, elapsedSeconds: 2000)
         XCTAssertEqual(makeRunner(resuming: saved).phase, .finished)
     }
 
+    // MARK: Logging the load
+
+    func testASetRecordsTheWeightAndRepsInTheEntryFields() {
+        let runner = makeRunner()
+        runner.setWeight(185)
+        runner.setReps(5)
+        runner.completeSet()
+        let logged = runner.loggedSets[0].first
+        XCTAssertEqual(logged?.weightLbs, 185)
+        XCTAssertEqual(logged?.reps, 5)
+    }
+
+    /// Straight sets should cost one tap each: what you lifted on set 1 is
+    /// still in the field for set 2.
+    func testTheEntryCarriesForwardToTheNextSet() {
+        let runner = makeRunner()
+        runner.setWeight(185)
+        runner.setReps(5)
+        runner.completeSet()
+        XCTAssertEqual(runner.entryWeightLbs, 185)
+        XCTAssertEqual(runner.entryReps, 5)
+    }
+
+    func testTheEntryResetsWhenMovingToADifferentExercise() {
+        let runner = makeRunner()
+        runner.setWeight(225)
+        for _ in 0..<3 { runner.completeSet() }   // finish the squat
+        XCTAssertEqual(runner.currentExercise?.name, "RDL")
+        XCTAssertNil(runner.entryWeightLbs, "The RDL has no history, so there's nothing to prefill")
+    }
+
+    func testSteppersMoveInPlateAndRepSizedJumps() {
+        let runner = makeRunner()
+        runner.setWeight(135)
+        runner.adjustWeight(by: 5)
+        XCTAssertEqual(runner.entryWeightLbs, 140)
+        runner.setReps(8)
+        runner.adjustReps(by: -1)
+        XCTAssertEqual(runner.entryReps, 7)
+    }
+
+    func testWeightAndRepsNeverGoNegative() {
+        let runner = makeRunner()
+        runner.setWeight(5)
+        runner.adjustWeight(by: -50)
+        XCTAssertEqual(runner.entryWeightLbs, 0)
+        runner.setReps(1)
+        runner.adjustReps(by: -9)
+        XCTAssertEqual(runner.entryReps, 0)
+    }
+
+    /// A ruck has no countable reps, so a weight field would be meaningless —
+    /// and must not be written into the log where progression would read it.
+    func testUntrackedWorkLogsNoLoad() {
+        let runner = makeRunner(ruck)
+        runner.setWeight(200)
+        runner.completeSet()
+        XCTAssertNil(runner.loggedSets[0].first?.weightLbs)
+        XCTAssertNil(runner.loggedSets[0].first?.reps)
+    }
+
+    func testUndoRestoresThePreviousSetsNumbersToTheField() {
+        let runner = makeRunner()
+        runner.setWeight(185); runner.setReps(5)
+        runner.completeSet()
+        runner.setWeight(195); runner.setReps(3)
+        runner.completeSet()
+        runner.undoSet()
+        XCTAssertEqual(runner.entryWeightLbs, 185, "Undo should put you back where set 1 left you")
+        XCTAssertEqual(runner.entryReps, 5)
+    }
+
+    // MARK: The finished record
+
+    func testTheRecordCarriesEverySetThatWasLogged() {
+        let runner = makeRunner()
+        runner.setWeight(225); runner.setReps(5)
+        runner.completeSet()
+        runner.completeSet()
+        runner.finish()
+
+        let record = runner.completedWorkout()
+        XCTAssertEqual(record.focus, .lowerStrength)
+        XCTAssertEqual(record.exercises.count, 1, "Only the squat was touched")
+        XCTAssertEqual(record.exercises[0].exerciseName, "Back Squat")
+        XCTAssertEqual(record.exercises[0].sets.count, 2)
+        XCTAssertEqual(record.exercises[0].topWeightLbs, 225)
+        XCTAssertEqual(record.exercises[0].volumeLbs, 2250)   // 225 × 5 × 2
+    }
+
+    /// An exercise you walked past must not enter the log — progression would
+    /// read "performed, zero work" as a stall and pull the weight down.
+    func testSkippedExercisesAreLeftOutOfTheRecord() {
+        let runner = makeRunner()
+        runner.completeSet()
+        runner.finish()
+        XCTAssertFalse(runner.completedWorkout().exercises.contains { $0.exerciseName == "RDL" })
+    }
+
+    func testTheRecordRoundTripsThroughCoding() throws {
+        let runner = makeRunner()
+        runner.setWeight(137.5); runner.setReps(6)
+        runner.completeSet()
+        runner.finish()
+        let original = runner.completedWorkout()
+        let decoded = try JSONDecoder().decode(
+            CompletedWorkout.self, from: JSONEncoder().encode(original)
+        )
+        XCTAssertEqual(decoded.exercises.first?.topWeightLbs, 137.5)
+    }
+
+    // MARK: Suggestions inside a running session
+
+    func testTheWeightFieldOpensOnTheSuggestedLoad() {
+        let past = CompletedWorkout(
+            date: Date().addingTimeInterval(-7 * 86400), focus: .lowerStrength,
+            exercises: [ExerciseLog(exerciseName: "Back Squat", sets: [
+                SetEntry(weightLbs: 185, reps: 5),
+                SetEntry(weightLbs: 185, reps: 5),
+                SetEntry(weightLbs: 185, reps: 5)
+            ])],
+            durationSeconds: 2400
+        )
+        // "5" is a fixed target, so hitting 5 on every set clears the range.
+        let runner = makeRunner(history: [past])
+        XCTAssertEqual(runner.suggestion.kind, .increase)
+        XCTAssertEqual(runner.entryWeightLbs, 195, "Lower-body compounds jump 10 lb")
+    }
+
+    func testLastPerformanceIsSurfacedForTheCurrentExercise() {
+        let past = CompletedWorkout(
+            date: Date().addingTimeInterval(-7 * 86400), focus: .lowerStrength,
+            exercises: [ExerciseLog(exerciseName: "Back Squat",
+                                    sets: [SetEntry(weightLbs: 185, reps: 4)])],
+            durationSeconds: 900
+        )
+        XCTAssertEqual(makeRunner(history: [past]).lastPerformance?.summaryLine, "185×4")
+    }
+
     // MARK: Formatting
+
+    func testSetLineFormatting() {
+        XCTAssertEqual(SetEntry(weightLbs: 135, reps: 8).shortLine, "135×8")
+        XCTAssertEqual(SetEntry(weightLbs: 137.5, reps: 8).shortLine, "137.5×8")
+        XCTAssertEqual(SetEntry(reps: 8).shortLine, "×8")
+        XCTAssertEqual(SetEntry(weightLbs: 45).shortLine, "45 lb")
+        XCTAssertEqual(SetEntry().shortLine, "done")
+    }
 
     func testClockFormatting() {
         XCTAssertEqual(0.asClock, "0:00")

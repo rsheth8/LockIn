@@ -14,6 +14,8 @@ struct ProgressGalleryView: View {
     @State private var showingCameraUnavailableAlert = false
     @State private var selectedPhoto: ProgressPhoto?
     @State private var showingWeighIn = false
+    /// Non-nil while one lift's own history is open.
+    @State private var selectedExercise: String?
 
     private let store = ProgressPhotoStore.shared
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 3)]
@@ -36,6 +38,7 @@ struct ProgressGalleryView: View {
                     }
                     promiseSection
                     weightSection
+                    trainingSection
                     photoSection
                 }
                 .padding(.horizontal, Theme.gutter)
@@ -58,6 +61,16 @@ struct ProgressGalleryView: View {
                 goalWeightLbs: appState.profile.goalWeightLbs,
                 previousWeightLbs: appState.previousWeightEntry,
                 onSave: { lbs in withAnimation(.snappy) { appState.logWeight(lbs) } }
+            )
+        }
+        .sheet(item: Binding(
+            get: { selectedExercise.map(NamedExercise.init) },
+            set: { selectedExercise = $0?.name }
+        )) { picked in
+            ExerciseHistoryView(
+                exerciseName: picked.name,
+                logs: appState.performanceHistory(of: picked.name),
+                workouts: appState.workoutHistory
             )
         }
         .sheet(item: $selectedPhoto) { photo in
@@ -179,6 +192,74 @@ struct ProgressGalleryView: View {
         let delta = last.weightLbs - first.weightLbs
         let sign = delta < 0 ? "−" : "+"
         return "\(sign)\(abs(Int(delta))) lb"
+    }
+
+    // MARK: - Training log
+
+    /// What you actually lifted, session by session, newest first.
+    ///
+    /// Grouped by session rather than by lift because that's how you remember
+    /// training — "last Thursday" not "my fourth-best row". Tapping a lift opens
+    /// its own trend, which is the view that answers "am I getting stronger".
+    private var trainingSection: some View {
+        let recent = appState.recentWorkouts(days: 60)
+        return VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Training", trailing: trainingSummary(recent))
+
+            if recent.isEmpty {
+                emptyNote("Run a session in the workout portal and the weights you used land here.")
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(recent.prefix(8)) { workout in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(workout.focus.title)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(Theme.ink)
+                                Spacer(minLength: 8)
+                                Text(workout.date, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
+                                    .font(Theme.mono(11))
+                                    .foregroundStyle(Theme.inkMuted)
+                            }
+                            ForEach(workout.exercises) { log in
+                                Button {
+                                    Haptics.tap()
+                                    selectedExercise = log.exerciseName
+                                } label: {
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        Text(log.exerciseName)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Theme.inkMuted)
+                                            .lineLimit(1)
+                                        Spacer(minLength: 8)
+                                        Text(log.summaryLine)
+                                            .font(Theme.mono(11, weight: .semibold))
+                                            .foregroundStyle(Theme.ink)
+                                            .lineLimit(1)
+                                    }
+                                    .padding(.vertical, 3)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 12)
+                        LedgerRule()
+                    }
+                }
+            }
+        }
+    }
+
+    /// "4 sessions · 12,480 lb" — volume is the honest one-number answer to
+    /// "how much work did I do", since it moves for both heavier and more.
+    private func trainingSummary(_ workouts: [CompletedWorkout]) -> String {
+        guard !workouts.isEmpty else { return "—" }
+        let volume = workouts.reduce(0.0) { total, workout in
+            total + workout.exercises.reduce(0) { $0 + $1.volumeLbs }
+        }
+        guard volume > 0 else { return "\(workouts.count) sessions" }
+        return "\(workouts.count) · \(Int(volume).formatted()) lb"
     }
 
     // MARK: - Photos

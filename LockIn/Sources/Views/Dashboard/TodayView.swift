@@ -91,9 +91,12 @@ struct TodayView: View {
                 session: session,
                 eventID: event.id,
                 dayKey: DayRecord.key(for: Date()),
+                history: appState.workoutHistory,
                 resuming: appState.workoutProgress(for: event),
                 onProgress: { appState.saveWorkoutProgress($0) },
-                onComplete: { _ in withAnimation(.snappy) { appState.completeWorkout(event) } }
+                onComplete: { record in
+                    withAnimation(.snappy) { appState.completeWorkout(event, record: record) }
+                }
             )
         }
         .sheet(item: $weighInEvent) { _ in

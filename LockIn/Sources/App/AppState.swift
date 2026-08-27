@@ -17,6 +17,9 @@ final class AppState: ObservableObject {
     @Published var loggedMeals: [LoggedMeal] = []
     /// Things picked out in Shop Smart and not yet bought.
     @Published var shoppingList: [ShoppingListItem] = []
+    /// Every completed training session, oldest first. The record `ProgressionEngine`
+    /// reads to decide what you should be lifting today.
+    @Published var workoutHistory: [CompletedWorkout] = []
 
 #if DEBUG
     /// True while "Watch the demo" is running. RootView checks this before
@@ -38,6 +41,7 @@ final class AppState: ObservableObject {
         self.dayRecords = store.loadDayRecords()
         self.loggedMeals = store.loadLoggedMeals()
         self.shoppingList = store.loadShoppingList()
+        self.workoutHistory = store.loadWorkoutHistory()
         backfillScheduleInputsIfNeeded()
 #if DEBUG
         // Dev affordance: open straight onto a preview day. Lets a class day be
@@ -303,11 +307,32 @@ final class AppState: ObservableObject {
         store.saveWorkoutProgress(progress)
     }
 
-    /// Closes out a workout: the promise is kept, and the resume point is
-    /// dropped so re-opening the portal starts a clean session.
-    func completeWorkout(_ event: ScheduledEvent) {
+    /// Closes out a workout: the session is filed in the training log, the
+    /// promise is kept, and the resume point is dropped so re-opening the portal
+    /// starts clean.
+    ///
+    /// A session where nothing was logged isn't filed. Progression reads this
+    /// log, and an empty entry would tell it you performed the lift and did
+    /// nothing — which reads as a stall and would pull your weights down.
+    func completeWorkout(_ event: ScheduledEvent, record: CompletedWorkout) {
+        if !record.exercises.isEmpty {
+            workoutHistory.append(record)
+            persistWorkoutHistory()
+        }
         if shouldPersist { store.clearWorkoutProgress() }
         confirm(event)
+    }
+
+    /// Every set of a given exercise, newest first — the per-lift trend.
+    func performanceHistory(of exerciseName: String) -> [ExerciseLog] {
+        ProgressionEngine.history(of: exerciseName, in: workoutHistory)
+    }
+
+    /// Sessions in the last `days`, newest first. Backs the Record tab's
+    /// training log.
+    func recentWorkouts(days: Int = 30) -> [CompletedWorkout] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? .distantPast
+        return workoutHistory.filter { $0.date >= cutoff }.sorted { $0.date > $1.date }
     }
 
     // MARK: - Shopping list
@@ -369,6 +394,11 @@ final class AppState: ObservableObject {
     private func persistShoppingList() {
         guard shouldPersist else { return }
         store.saveShoppingList(shoppingList)
+    }
+
+    private func persistWorkoutHistory() {
+        guard shouldPersist else { return }
+        store.saveWorkoutHistory(workoutHistory)
     }
 
     private func persistProfile(_ profile: UserProfile) {
@@ -531,6 +561,7 @@ final class AppState: ObservableObject {
         streak = DemoMode.streak
         loggedMeals = DemoMode.loggedMeals
         shoppingList = []
+        workoutHistory = []
         todaySchedule = DemoMode.todaySchedule(profile: demoProfile)
         onboardingComplete = true
         demoTour.stepIndex = 0
@@ -548,6 +579,7 @@ final class AppState: ObservableObject {
         dayRecords = store.loadDayRecords()
         loggedMeals = store.loadLoggedMeals()
         shoppingList = store.loadShoppingList()
+        workoutHistory = store.loadWorkoutHistory()
         todaySchedule = store.loadSchedule()
     }
 #endif

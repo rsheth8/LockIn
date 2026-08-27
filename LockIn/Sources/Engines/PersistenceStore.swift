@@ -9,7 +9,7 @@ final class PersistenceStore {
 
     private enum Key: String {
         case profile, schedule, streak, progressPhotos, dayRecords, loggedMeals, shoppingList
-        case workoutProgress
+        case workoutProgress, workoutHistory
     }
 
     func saveProfile(_ profile: UserProfile) {
@@ -78,6 +78,17 @@ final class PersistenceStore {
 
     func clearWorkoutProgress() {
         defaults.removeObject(forKey: Key.workoutProgress.rawValue)
+    }
+
+    /// Every completed session. This is the training log progression reads
+    /// from, so it's the one collection here that must never be pruned by
+    /// recency alone — a lift you only do fortnightly still needs its history.
+    func saveWorkoutHistory(_ workouts: [CompletedWorkout]) {
+        save(workouts, key: .workoutHistory)
+    }
+
+    func loadWorkoutHistory() -> [CompletedWorkout] {
+        load([CompletedWorkout].self, key: .workoutHistory) ?? []
     }
 
     func saveDayRecords(_ records: [DayRecord]) {
