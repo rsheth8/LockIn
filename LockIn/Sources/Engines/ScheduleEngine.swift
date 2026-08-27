@@ -107,7 +107,8 @@ enum ScheduleEngine {
                 .map { $0.displayName }.joined(separator: " · ")
             let detail = "\(session.summaryLine)\n\(session.equipmentNote)\nServes: \(goalTagLine)"
             events.append(ScheduledEvent(kind: .workout, title: session.focus.title,
-                detail: detail, time: workoutTime, durationMinutes: 60, isCritical: true))
+                detail: detail, time: workoutTime, durationMinutes: 60, isCritical: true,
+                linkedWorkout: session))
         }
 
         // MARK: Wind-down + sleep

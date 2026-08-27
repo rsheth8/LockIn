@@ -16,8 +16,14 @@ struct ScheduledEvent: Codable, Identifiable, Equatable {
     var isCritical: Bool        // critical events trigger guilt-trip escalation if missed
     var status: EventStatus = .pending
     var linkedMealID: UUID?
+    /// The full prescription behind a `.workout` event. The timeline only shows
+    /// its summary line, but the workout portal needs the sets/reps structure —
+    /// carrying it here means the portal runs exactly the session that was
+    /// planned rather than re-deriving one and risking a mismatch. Optional so
+    /// schedules persisted before the portal shipped still decode.
+    var linkedWorkout: WorkoutSession?
 
-    init(id: UUID = UUID(), kind: EventKind, title: String, detail: String, time: Date, durationMinutes: Int, isCritical: Bool, linkedMealID: UUID? = nil) {
+    init(id: UUID = UUID(), kind: EventKind, title: String, detail: String, time: Date, durationMinutes: Int, isCritical: Bool, linkedMealID: UUID? = nil, linkedWorkout: WorkoutSession? = nil) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -26,6 +32,7 @@ struct ScheduledEvent: Codable, Identifiable, Equatable {
         self.durationMinutes = durationMinutes
         self.isCritical = isCritical
         self.linkedMealID = linkedMealID
+        self.linkedWorkout = linkedWorkout
     }
 }
 

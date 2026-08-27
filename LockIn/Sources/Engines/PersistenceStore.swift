@@ -9,6 +9,7 @@ final class PersistenceStore {
 
     private enum Key: String {
         case profile, schedule, streak, progressPhotos, dayRecords, loggedMeals, shoppingList
+        case workoutProgress
     }
 
     func saveProfile(_ profile: UserProfile) {
@@ -62,6 +63,21 @@ final class PersistenceStore {
 
     func loadShoppingList() -> [ShoppingListItem] {
         load([ShoppingListItem].self, key: .shoppingList) ?? []
+    }
+
+    /// The one in-flight workout, if any. Only ever one — you can't be halfway
+    /// through two sessions at once, and keeping a history of abandoned ones
+    /// would be a record of nothing.
+    func saveWorkoutProgress(_ progress: WorkoutProgress) {
+        save(progress, key: .workoutProgress)
+    }
+
+    func loadWorkoutProgress() -> WorkoutProgress? {
+        load(WorkoutProgress.self, key: .workoutProgress)
+    }
+
+    func clearWorkoutProgress() {
+        defaults.removeObject(forKey: Key.workoutProgress.rawValue)
     }
 
     func saveDayRecords(_ records: [DayRecord]) {

@@ -14,6 +14,10 @@ struct TodayView: View {
     @State private var logTarget: LogTarget?
     /// Non-nil while an already-logged meal is being corrected.
     @State private var editingMeal: LoggedMeal?
+    /// The workout event whose portal is open.
+    @State private var workoutEvent: ScheduledEvent?
+    /// The weigh-in event whose entry sheet is open.
+    @State private var weighInEvent: ScheduledEvent?
 
     /// Identifiable wrapper so `.sheet(item:)` can drive both entry points
     /// through one presentation.
@@ -35,12 +39,10 @@ struct TodayView: View {
                         if !isPreview, let event = appState.currentEvent {
                             HeroCard(
                                 event: event,
+                                action: EventAction.primary(for: event),
+                                onAction: { perform(EventAction.primary(for: event), on: event) },
                                 onConfirm: { confirm(event) },
-                                onSkip: { skip(event) },
-                                onAteSomethingElse: event.kind == .meal
-                                    ? { logTarget = LogTarget(event: event) }
-                                    : nil,
-                                onTapDetail: { if event.kind == .progressPhoto { onOpenProgressPhoto() } }
+                                onSkip: { skip(event) }
                             )
                         }
                         if !isPreview, let coach = appState.coachLine {
@@ -78,6 +80,44 @@ struct TodayView: View {
                 onSave: { updated in withAnimation(.snappy) { appState.updateLoggedMeal(updated) } },
                 onDelete: { old in withAnimation(.snappy) { appState.deleteLoggedMeal(old) } }
             )
+        }
+        .fullScreenCover(item: $workoutEvent) { event in
+            // A schedule persisted before the portal shipped has no attached
+            // session, so fall back to deriving today's — the alternative is a
+            // Start button that does nothing.
+            let session = event.linkedWorkout
+                ?? WorkoutEngine.session(for: appState.previewDate, goals: appState.profile.fitnessGoals)
+            WorkoutPortalView(
+                session: session,
+                eventID: event.id,
+                dayKey: DayRecord.key(for: Date()),
+                resuming: appState.workoutProgress(for: event),
+                onProgress: { appState.saveWorkoutProgress($0) },
+                onComplete: { _ in withAnimation(.snappy) { appState.completeWorkout(event) } }
+            )
+        }
+        .sheet(item: $weighInEvent) { _ in
+            LogWeightView(
+                currentWeightLbs: appState.profile.currentWeightLbs,
+                goalWeightLbs: appState.profile.goalWeightLbs,
+                previousWeightLbs: appState.previousWeightEntry,
+                onSave: { lbs in withAnimation(.snappy) { appState.logWeight(lbs) } }
+            )
+        }
+    }
+
+    // MARK: - Routing
+
+    /// Single dispatcher for every card's primary action, so the hero card, the
+    /// timeline row and the context menu can't drift apart.
+    private func perform(_ action: EventAction?, on event: ScheduledEvent) {
+        guard let action else { return }
+        Haptics.tap()
+        switch action {
+        case .logMeal: logTarget = LogTarget(event: event)
+        case .startWorkout: workoutEvent = event
+        case .logWeight: weighInEvent = event
+        case .takePhoto: onOpenProgressPhoto()
         }
     }
 
@@ -299,22 +339,19 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("The Day").ledgerLabel().padding(.bottom, 10)
             ForEach(schedule.events) { event in
+                let action = interactive ? EventAction.primary(for: event) : nil
                 TimelineRow(
                     event: event,
                     isCurrent: interactive && event.id == appState.currentEvent?.id,
                     interactive: interactive,
+                    action: action,
+                    onAction: { perform(action, on: event) },
                     onConfirm: { confirm(event) },
-                    onSkip: { skip(event) },
-                    onAteSomethingElse: interactive && event.kind == .meal
-                        ? { logTarget = LogTarget(event: event) }
-                        : nil
+                    onSkip: { skip(event) }
                 )
-                .onTapGesture {
-                    if interactive, event.kind == .progressPhoto {
-                        Haptics.tap()
-                        onOpenProgressPhoto()
-                    }
-                }
+                // The whole row is the target, not just the icon — reaching a
+                // 30pt button while walking is a worse ask than it looks.
+                .onTapGesture { perform(action, on: event) }
             }
         }
     }
@@ -337,12 +374,14 @@ struct TodayView: View {
 
 private struct HeroCard: View {
     let event: ScheduledEvent
+    /// The thing this card actually wants you to do, if it has one. Drives the
+    /// primary button and demotes Done to a secondary.
+    let action: EventAction?
+    let onAction: () -> Void
     let onConfirm: () -> Void
     let onSkip: () -> Void
-    /// Only set for meals — nothing else has a meaningful substitute.
-    let onAteSomethingElse: (() -> Void)?
-    let onTapDetail: () -> Void
 
+    @Environment(\.accent) private var accent
     /// Live countdown so the card feels present rather than static.
     @State private var now = Date()
     private let tick = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -375,18 +414,43 @@ private struct HeroCard: View {
                     .foregroundStyle(Theme.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 12)
-                    .onTapGesture(perform: onTapDetail)
+            }
+
+            // When the event has a real path — log the food, run the session,
+            // step on the scale — that becomes the filled button and confirming
+            // drops to a secondary. Ticking a box you didn't do the work behind
+            // is the failure mode this hierarchy is fighting.
+            if let action {
+                Button(action: onAction) {
+                    HStack(spacing: 7) {
+                        Image(systemName: action.systemImage)
+                            .font(.system(size: 14, weight: .semibold))
+                        Text(action.title)
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(Theme.ink)
+                    .foregroundStyle(Theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 22)
             }
 
             HStack(spacing: 10) {
                 Button(action: onConfirm) {
-                    Text("Done")
+                    Text(confirmLabel)
                         .font(.system(size: 16, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
-                        .background(Theme.ink)
-                        .foregroundStyle(Theme.surface)
+                        .background(action == nil ? Theme.ink : Color.clear)
+                        .foregroundStyle(action == nil ? Theme.surface : Theme.inkMuted)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(action == nil ? Color.clear : Theme.rule, lineWidth: 1)
+                        )
                 }
                 Button(action: onSkip) {
                     Text("Skip")
@@ -401,20 +465,7 @@ private struct HeroCard: View {
                 }
             }
             .buttonStyle(.plain)
-            .padding(.top, 22)
-
-            // Third path for meals: you ate, just not this. Kept visually
-            // quieter than Done/Skip so the planned meal stays the default.
-            if let onAteSomethingElse {
-                Button(action: onAteSomethingElse) {
-                    Text("Ate something else")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.inkMuted)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 12)
-                }
-                .buttonStyle(.plain)
-            }
+            .padding(.top, action == nil ? 22 : 10)
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -423,6 +474,16 @@ private struct HeroCard: View {
     }
 
     private var isOverdue: Bool { now > event.time && event.status == .pending }
+
+    /// "Done" is vague next to an action button. Say what confirming means:
+    /// you ate the planned meal, you trained without the portal.
+    private var confirmLabel: String {
+        switch event.kind {
+        case .meal: return "Ate the plan"
+        case .workout: return "Did it"
+        default: return "Done"
+        }
+    }
 
     private var relativeLine: String {
         let delta = event.time.timeIntervalSince(now)
@@ -439,13 +500,18 @@ private struct TimelineRow: View {
     let event: ScheduledEvent
     let isCurrent: Bool
     var interactive: Bool = true
+    let action: EventAction?
+    let onAction: () -> Void
     let onConfirm: () -> Void
     let onSkip: () -> Void
-    let onAteSomethingElse: (() -> Void)?
+
+    @Environment(\.accent) private var accent
 
     /// Classes and the leave-by nudge are fixed scaffolding — shown, but with no
     /// check-off affordance and a plainer marker.
     private var isStructural: Bool { event.kind == .classSession || event.kind == .commute }
+
+    private var isPending: Bool { event.status == .pending || event.status == .snoozed }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -475,22 +541,38 @@ private struct TimelineRow: View {
             }
             Spacer(minLength: 0)
 
-            // Pending rows carry their own confirm affordance so you can clear
-            // anything from the timeline without scrolling back to the hero card.
-            if interactive, !isStructural, event.status == .pending || event.status == .snoozed {
-                Button(action: onConfirm) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Theme.inkMuted)
-                        .frame(width: 30, height: 30)
-                        .overlay(Circle().strokeBorder(Theme.rule, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    Button("Mark as done", systemImage: "checkmark", action: onConfirm)
-                    if let onAteSomethingElse {
-                        Button("Ate something else", systemImage: "camera", action: onAteSomethingElse)
+            // Two affordances, in priority order: the event's real action (open
+            // the portal, log the food) and the plain tick. Every path on the
+            // hero card is reachable from its row too, so clearing something an
+            // hour later doesn't mean waiting for it to come back around.
+            if interactive, !isStructural, isPending {
+                HStack(spacing: 8) {
+                    if let action {
+                        Button(action: onAction) {
+                            Image(systemName: action.systemImage)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(accent.color)
+                                .frame(width: 30, height: 30)
+                                .overlay(Circle().strokeBorder(accent.color.opacity(0.35), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(action.title)
                     }
+                    Button(action: onConfirm) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Theme.inkMuted)
+                            .frame(width: 30, height: 30)
+                            .overlay(Circle().strokeBorder(Theme.rule, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Mark \(event.title) as done")
+                }
+                .contextMenu {
+                    if let action {
+                        Button(action.title, systemImage: action.systemImage, action: onAction)
+                    }
+                    Button("Mark as done", systemImage: "checkmark", action: onConfirm)
                     Button("Skip it", systemImage: "xmark", role: .destructive, action: onSkip)
                 }
             }

@@ -252,6 +252,64 @@ final class AppState: ObservableObject {
         persistLoggedMeals()
     }
 
+    // MARK: - Weigh-in
+
+    /// Records a weigh-in: updates the live weight (which macro targets are
+    /// computed from) and appends to the trend.
+    ///
+    /// One entry per day — re-weighing after a bad number would otherwise stack
+    /// two points on the same date and put a vertical line through the chart.
+    func logWeight(_ lbs: Double) {
+        var updated = profile
+        updated.currentWeightLbs = lbs
+        let today = Calendar.current.startOfDay(for: Date())
+        if let index = updated.weightHistory.firstIndex(where: {
+            Calendar.current.isDate($0.date, inSameDayAs: today)
+        }) {
+            updated.weightHistory[index] = WeightEntry(date: Date(), weightLbs: lbs)
+        } else {
+            updated.weightHistory.append(WeightEntry(date: Date(), weightLbs: lbs))
+        }
+        profile = updated
+        persistProfile(updated)
+
+        if let event = todaySchedule?.events.first(where: { $0.kind == .weighIn }) {
+            confirm(event)
+        }
+    }
+
+    /// The weight before the one being entered now — the number a new weigh-in
+    /// is compared against.
+    var previousWeightEntry: Double? {
+        let today = Calendar.current.startOfDay(for: Date())
+        return profile.weightHistory
+            .filter { !Calendar.current.isDate($0.date, inSameDayAs: today) }
+            .last?.weightLbs
+    }
+
+    // MARK: - Workout portal
+
+    /// A half-finished session for `event`, if one was left today. Anything
+    /// older is stale — yesterday's abandoned workout isn't today's.
+    func workoutProgress(for event: ScheduledEvent) -> WorkoutProgress? {
+        guard let saved = store.loadWorkoutProgress(),
+              saved.eventID == event.id,
+              saved.dayKey == DayRecord.key(for: Date()) else { return nil }
+        return saved
+    }
+
+    func saveWorkoutProgress(_ progress: WorkoutProgress) {
+        guard shouldPersist else { return }
+        store.saveWorkoutProgress(progress)
+    }
+
+    /// Closes out a workout: the promise is kept, and the resume point is
+    /// dropped so re-opening the portal starts a clean session.
+    func completeWorkout(_ event: ScheduledEvent) {
+        if shouldPersist { store.clearWorkoutProgress() }
+        confirm(event)
+    }
+
     // MARK: - Shopping list
 
     func isOnShoppingList(_ id: String) -> Bool {

@@ -13,6 +13,7 @@ struct ProgressGalleryView: View {
     @State private var showingCamera = false
     @State private var showingCameraUnavailableAlert = false
     @State private var selectedPhoto: ProgressPhoto?
+    @State private var showingWeighIn = false
 
     private let store = ProgressPhotoStore.shared
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 3)]
@@ -51,6 +52,14 @@ struct ProgressGalleryView: View {
             }
             .ignoresSafeArea()
         }
+        .sheet(isPresented: $showingWeighIn) {
+            LogWeightView(
+                currentWeightLbs: appState.profile.currentWeightLbs,
+                goalWeightLbs: appState.profile.goalWeightLbs,
+                previousWeightLbs: appState.previousWeightEntry,
+                onSave: { lbs in withAnimation(.snappy) { appState.logWeight(lbs) } }
+            )
+        }
         .sheet(item: $selectedPhoto) { photo in
             PhotoDetailView(photo: photo, store: store) {
                 store.delete(photo)
@@ -82,7 +91,24 @@ struct ProgressGalleryView: View {
 
     private var weightSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Weight", trailing: weightDeltaSummary)
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                sectionHeader("Weight", trailing: weightDeltaSummary)
+                // The chart's own entry point. The scheduled weigh-in only comes
+                // round on Mondays, and a chart you can't add a point to is a
+                // dead end on the days you actually step on the scale.
+                Button {
+                    Haptics.tap()
+                    showingWeighIn = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Theme.inkMuted)
+                        .frame(width: 26, height: 26)
+                        .overlay(Circle().strokeBorder(Theme.rule, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Log your weight")
+            }
 
             if appState.profile.weightHistory.count < 2 {
                 emptyNote("Two weigh-ins and this becomes a trend line. Right now it's a dot.")
@@ -166,7 +192,7 @@ struct ProgressGalleryView: View {
             }
 
             if photos.isEmpty {
-                emptyNote("Same spot, same light, same pose — every day. The scale lies on any given morning; this doesn't.")
+                emptyNote("Same spot, same light, same pose — every week. The scale lies on any given morning; this doesn't.")
             } else {
                 LazyVGrid(columns: columns, spacing: 3) {
                     ForEach(photos.reversed()) { photo in
