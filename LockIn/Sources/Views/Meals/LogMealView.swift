@@ -15,6 +15,7 @@ struct LogMealView: View {
     @State private var showingLabelCamera = false
     @State private var showingLabelLibrary = false
     @State private var choosingLabelSource = false
+    @State private var showingShopSmart = false
 
     /// Called with the finished entry so the caller can commit it to AppState.
     let onSave: (LoggedMeal) -> Void
@@ -77,6 +78,9 @@ struct LogMealView: View {
             .sheet(isPresented: $showingLabelLibrary) {
                 PhotoLibraryPicker { image in model.readLabel(from: image) }
                     .ignoresSafeArea()
+            }
+            .sheet(isPresented: $showingShopSmart) {
+                GrocerySearchView()
             }
         }
     }
@@ -276,7 +280,28 @@ struct LogMealView: View {
             Text("Or type it").ledgerLabel()
             searchField
             searchResultList
+
+            LedgerRule()
+
+            shopSmartSection
         }
+    }
+
+    /// Deciding *what to buy* rather than recording what was eaten — a
+    /// different question, but the one that tends to get asked from this
+    /// screen, standing in a shop.
+    @ViewBuilder
+    private var shopSmartSection: some View {
+        Text("Not bought it yet?").ledgerLabel()
+
+        secondaryButton("cart", "Shop Smart") {
+            showingShopSmart = true
+        }
+
+        Text("Search a grocery item, see how it actually scores on sugar, sodium, fibre and processing, then take the pick straight to Walmart or Target.")
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.inkMuted)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Anything that came out of a box. Recognising a plate of food and

@@ -215,7 +215,7 @@ final class OpenFoodFactsClientTests: XCTestCase {
 
     func testDecodesNutrimentsPer100g() async throws {
         respond("""
-        {"products":[{"product_name":"Greek Yogurt","nutriments":{
+        {"hits":[{"product_name":"Greek Yogurt","nutriments":{
           "energy-kcal_100g":73,"proteins_100g":10,"fat_100g":2,"carbohydrates_100g":4}}]}
         """)
 
@@ -230,7 +230,7 @@ final class OpenFoodFactsClientTests: XCTestCase {
     /// enough that strict decoding would drop otherwise-good entries.
     func testDecodesNumericStringsFromCrowdsourcedEntries() async throws {
         respond("""
-        {"products":[{"product_name":"Lentils","nutriments":{
+        {"hits":[{"product_name":"Lentils","nutriments":{
           "energy-kcal_100g":"116","proteins_100g":"9","fat_100g":"0.4","carbohydrates_100g":"20"}}]}
         """)
 
@@ -243,7 +243,7 @@ final class OpenFoodFactsClientTests: XCTestCase {
     /// like a successful lookup.
     func testSkipsEntriesWithNoNutritionAndFallsThrough() async throws {
         respond("""
-        {"products":[
+        {"hits":[
           {"product_name":"Greek Yogurt","nutriments":{}},
           {"product_name":"Greek Yogurt Plain","nutriments":{
             "energy-kcal_100g":73,"proteins_100g":10,"fat_100g":2,"carbohydrates_100g":4}}]}
@@ -255,7 +255,7 @@ final class OpenFoodFactsClientTests: XCTestCase {
 
     func testRejectsEntriesWithCaloriesButNoMacros() async throws {
         respond("""
-        {"products":[{"product_name":"Incomplete","nutriments":{"energy-kcal_100g":200}}]}
+        {"hits":[{"product_name":"Incomplete","nutriments":{"energy-kcal_100g":200}}]}
         """)
 
         let facts = try await client.nutrition(for: "incomplete")
@@ -266,7 +266,7 @@ final class OpenFoodFactsClientTests: XCTestCase {
     /// packaged side dish whose macros have nothing to do with the meal.
     func testRejectsProductsThatOnlyMentionTheQuery() async throws {
         respond("""
-        {"products":[{"product_name":"céréales et légumes, façon pad thaï, bio","nutriments":{
+        {"hits":[{"product_name":"céréales et légumes, façon pad thaï, bio","nutriments":{
           "energy-kcal_100g":122,"proteins_100g":4,"fat_100g":2,"carbohydrates_100g":21}}]}
         """)
 
@@ -288,13 +288,13 @@ final class OpenFoodFactsClientTests: XCTestCase {
     }
 
     func testEmptyResultsReturnNil() async throws {
-        respond(#"{"products":[]}"#)
+        respond(#"{"hits":[]}"#)
         let facts = try await client.nutrition(for: "nothing at all")
         XCTAssertNil(facts)
     }
 
     func testServerErrorSurfaces() async {
-        respond(#"{"products":[]}"#, status: 503)
+        respond(#"{"hits":[]}"#, status: 503)
         do {
             _ = try await client.nutrition(for: "x")
             XCTFail("expected a thrown error")
@@ -304,12 +304,13 @@ final class OpenFoodFactsClientTests: XCTestCase {
     }
 
     func testIdentifiesItselfToTheAPI() async throws {
-        respond(#"{"products":[]}"#)
+        respond(#"{"hits":[]}"#)
         _ = try await client.nutrition(for: "rice")
 
         let url = try XCTUnwrap(MockURLProtocol.requestedURLs.first)
-        XCTAssertTrue(url.absoluteString.contains("search_terms=rice"))
-        XCTAssertTrue(url.absoluteString.contains("json=1"))
+        XCTAssertEqual(url.host, "search.openfoodfacts.org",
+                       "the legacy /cgi/search.pl on the main host now answers 503")
+        XCTAssertTrue(url.absoluteString.contains("q=rice"))
     }
 }
 
