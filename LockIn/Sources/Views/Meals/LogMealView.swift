@@ -65,8 +65,10 @@ struct LogMealView: View {
                     .ignoresSafeArea()
             }
             .fullScreenCover(isPresented: $showingBarcode) {
+                // No .ignoresSafeArea() here — the scanner decides for itself.
+                // The camera wants the full screen; the no-camera stand-in has
+                // a navigation bar that must stay below the status bar.
                 BarcodeScannerView { code in model.lookUpBarcode(code) }
-                    .ignoresSafeArea()
             }
             .fullScreenCover(isPresented: $showingLabelCamera) {
                 CameraCaptureView { image in model.readLabel(from: image) }
@@ -222,7 +224,7 @@ struct LogMealView: View {
             // Hidden where there's no camera — the simulator, or a device
             // where it's restricted. Presenting the camera picker there gives
             // a dead black sheet rather than a useful failure.
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            if CameraCaptureView.isAvailable {
                 Button {
                     Haptics.tap()
                     showingCamera = true
@@ -287,7 +289,7 @@ struct LogMealView: View {
 
         // Barcode first: it's the most accurate lookup in the app and needs
         // nothing from the user but pointing the camera.
-        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+        if BarcodeScannerView.isAvailable {
             secondaryButton("barcode.viewfinder", "Scan a barcode") {
                 showingBarcode = true
             }
@@ -298,7 +300,7 @@ struct LogMealView: View {
             // label is often already in the camera roll (a photo taken in the
             // shop, a screenshot of a product page), and OCR treats a saved
             // image exactly the same as a fresh capture.
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            if CameraCaptureView.isAvailable {
                 choosingLabelSource = true
             } else {
                 showingLabelLibrary = true

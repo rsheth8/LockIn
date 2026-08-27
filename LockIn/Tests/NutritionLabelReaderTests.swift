@@ -97,6 +97,50 @@ final class NutritionLabelParsingTests: XCTestCase {
         XCTAssertEqual(reading.calories, 250)
     }
 
+    /// On the pre-2016 panel the two calorie figures are printed *side by
+    /// side*, not stacked — so they reach the parser as one row. Rejecting any
+    /// row mentioning "from fat" made every label in that format unreadable,
+    /// which is a lot of what's still on shelves.
+    ///
+    /// Found by photographing a rendered legacy panel, not by reading the
+    /// code: the stacked-layout test above passes either way.
+    func testCaloriesSurviveSharingARowWithCaloriesFromFat() {
+        let reading = NutritionLabelReader.parse(rows: [
+            "Amount Per Serving",
+            "Calories 140 Calories from Fat 30",
+            "Total Fat 3.5g 5%",
+            "Total Carbohydrate 24g 8%",
+            "Protein 4g"
+        ])
+
+        XCTAssertEqual(reading.calories, 140, "the from-fat clause must be dropped, not the whole row")
+        XCTAssertEqual(reading.fat, 3.5)
+        XCTAssertTrue(reading.isUsable)
+    }
+
+    /// The flip side: with the row split across two lines the from-fat figure
+    /// still must not be mistaken for the calorie count.
+    func testCaloriesFromFatAloneIsIgnored() {
+        let reading = NutritionLabelReader.parse(rows: [
+            "Calories from Fat 110",
+            "Total Fat 12g"
+        ])
+
+        XCTAssertNil(reading.calories)
+        XCTAssertFalse(reading.isUsable)
+    }
+
+    /// The footnote every panel carries. It mentions calories and a number,
+    /// and must not be read as the meal's calorie count.
+    func testDailyValueFootnoteIsNotReadAsCalories() {
+        let reading = NutritionLabelReader.parse(rows: [
+            "Total Fat 3.5g 5%",
+            "* Percent Daily Values are based on a 2,000 calorie diet."
+        ])
+
+        XCTAssertNil(reading.calories)
+    }
+
     /// The single most common OCR failure on these panels: a zero read as the
     /// letter O. Left unrepaired it turns "0g" into no reading at all, which
     /// silently drops a macro rather than failing visibly.
@@ -168,23 +212,69 @@ final class NutritionLabelOCRTests: XCTestCase {
         XCTAssertEqual(reading.protein, 3)
     }
 
+    /// The pre-2016 format, which prints "Calories 140" and "Calories from Fat
+    /// 30" side by side on one line rather than stacked.
+    ///
+    /// That layout used to defeat the reader completely: the two figures reach
+    /// the parser as a single row, and rejecting any row mentioning "from fat"
+    /// threw the real calorie count away with it. Nothing in the parser tests
+    /// could see it — they feed rows that are already split.
+    func testReadsALegacyFormatPanelEndToEnd() async throws {
+        let image = Self.renderPanel(rows: Self.legacyRows)
+        let reading = try await NutritionLabelReader.read(image)
+
+        XCTAssertTrue(reading.isUsable, "a whole label format must not read as unreadable")
+        XCTAssertEqual(reading.calories, 140, "not 30, and not nil")
+        XCTAssertEqual(reading.fat, 3.5)
+        XCTAssertEqual(reading.carbs, 24)
+        XCTAssertEqual(reading.protein, 4)
+        XCTAssertEqual(reading.servingGrams, 49)
+    }
+
+    private static let modernRows: [(String, String)] = [
+        ("Nutrition Facts", ""),
+        ("Serving size", "2/3 cup (55g)"),
+        ("Calories", "230"),
+        ("Total Fat", "8g"),
+        ("Saturated Fat", "1g"),
+        ("Trans Fat", "0g"),
+        ("Sodium", "160mg"),
+        ("Total Carbohydrate", "37g"),
+        ("Dietary Fiber", "4g"),
+        ("Protein", "3g")
+    ]
+
+    /// Gram figures sit inline after their label here, with the right column
+    /// given over to % Daily Value — a three-piece line, as on the real thing.
+    private static let legacyRows: [(String, String)] = [
+        ("Nutrition Facts", ""),
+        ("Serving Size 1 tortilla (49g)", ""),
+        ("Amount Per Serving", ""),
+        ("Calories 140", "Calories from Fat 30"),
+        ("Total Fat 3.5g", "5%"),
+        ("Saturated Fat 1g", "5%"),
+        ("Trans Fat 0g", ""),
+        ("Cholesterol 0mg", "0%"),
+        ("Sodium 350mg", "15%"),
+        ("Total Carbohydrate 24g", "8%"),
+        ("Dietary Fiber 1g", "4%"),
+        ("Sugars 1g", ""),
+        ("Protein 4g", ""),
+        ("Percent Daily Values are based on a 2,000 calorie diet.", "")
+    ]
+
+    private static func renderPanel() -> UIImage { renderPanel(rows: modernRows) }
+
     /// Two-column layout, drawn the way a real panel is: the nutrient name on
     /// the left and its value on the right, far enough apart that Vision emits
     /// them as separate text observations.
-    private static func renderPanel() -> UIImage {
-        let size = CGSize(width: 640, height: 820)
-        let rows: [(String, String)] = [
-            ("Nutrition Facts", ""),
-            ("Serving size", "2/3 cup (55g)"),
-            ("Calories", "230"),
-            ("Total Fat", "8g"),
-            ("Saturated Fat", "1g"),
-            ("Trans Fat", "0g"),
-            ("Sodium", "160mg"),
-            ("Total Carbohydrate", "37g"),
-            ("Dietary Fiber", "4g"),
-            ("Protein", "3g")
-        ]
+    private static func renderPanel(rows: [(String, String)]) -> UIImage {
+        let width: CGFloat = 760
+        let bodyFont = UIFont.systemFont(ofSize: 28, weight: .regular)
+        let titleFont = UIFont.systemFont(ofSize: 40, weight: .bold)
+        let lineHeight = bodyFont.lineHeight + 22
+        let height = 80 + CGFloat(rows.count) * (titleFont.lineHeight + 22)
+        let size = CGSize(width: width, height: height)
 
         return UIGraphicsImageRenderer(size: size).image { context in
             UIColor.white.setFill()
@@ -192,18 +282,26 @@ final class NutritionLabelOCRTests: XCTestCase {
 
             var y: CGFloat = 40
             for (label, value) in rows {
-                let bold = label == "Nutrition Facts" || label == "Calories"
-                let font = UIFont.systemFont(ofSize: bold ? 40 : 28, weight: bold ? .bold : .regular)
+                let bold = label == "Nutrition Facts" || label.hasPrefix("Calories")
+                let font = bold ? titleFont : bodyFont
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: font, .foregroundColor: UIColor.black
                 ]
                 label.draw(at: CGPoint(x: 36, y: y), withAttributes: attributes)
 
                 if !value.isEmpty {
-                    let width = (value as NSString).size(withAttributes: attributes).width
-                    value.draw(at: CGPoint(x: size.width - 36 - width, y: y), withAttributes: attributes)
+                    // The right column is never the oversized calorie face —
+                    // on a real panel "Calories from Fat" is set small.
+                    let valueAttributes: [NSAttributedString.Key: Any] = [
+                        .font: bodyFont, .foregroundColor: UIColor.black
+                    ]
+                    let width = (value as NSString).size(withAttributes: valueAttributes).width
+                    // Centred against a taller left-hand label, so the two sit
+                    // on the same visual row and the reader has to group them.
+                    let offset = (font.lineHeight - bodyFont.lineHeight) / 2
+                    value.draw(at: CGPoint(x: size.width - 36 - width, y: y + offset), withAttributes: valueAttributes)
                 }
-                y += font.lineHeight + 22
+                y += bold ? titleFont.lineHeight + 22 : lineHeight
             }
         }
     }

@@ -131,11 +131,25 @@ enum NutritionLabelReader {
         for row in rows {
             let line = normalize(row)
 
-            // Calories first and only once. "Calories from Fat 70" appears on
-            // older labels below the real figure, so a later match must not
-            // overwrite an earlier one.
-            if reading.calories == nil, line.contains("calorie"), !line.contains("from fat") {
-                reading.calories = firstNumber(in: line, after: "calorie")
+            // Calories first and only once, so a stray later mention can't
+            // overwrite the real figure.
+            //
+            // The from-fat clause is deleted rather than used to reject the
+            // row. On the pre-2016 label "Calories 140" and "Calories from Fat
+            // 30" are printed side by side, so they arrive here as a single
+            // row — discarding it would make every legacy panel unreadable,
+            // and plenty are still on shelves. Dropping only the clause leaves
+            // "calories 140" behind, and a from-fat line standing on its own
+            // still reduces to nothing and is ignored as before.
+            if reading.calories == nil, line.contains("calorie") {
+                let withoutFromFat = line.replacingOccurrences(
+                    of: "calories? from fat[^0-9]*[0-9]+",
+                    with: " ",
+                    options: .regularExpression
+                )
+                if withoutFromFat.contains("calorie") {
+                    reading.calories = firstNumber(in: withoutFromFat, after: "calorie")
+                }
             }
 
             // "Total Fat 8g" — anchored on "total fat" ahead of bare "fat" so

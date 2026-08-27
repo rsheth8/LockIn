@@ -124,4 +124,42 @@ final class DemoModeTests: XCTestCase {
         let bodies = DemoTourController().steps.map { $0.title + " " + $0.body }.joined().lowercased()
         XCTAssertTrue(bodies.contains("photo"), "the tour should cover photo meal logging")
     }
+
+    /// Photo recognition is the flashiest route but the least accurate one. A
+    /// tour that only showed it would sell the app on its weakest path.
+    func testTourCoversBarcodeAndLabelScanning() {
+        let bodies = DemoTourController().steps.map { $0.title + " " + $0.body }.joined().lowercased()
+
+        XCTAssertTrue(bodies.contains("barcode"), "the tour should cover barcode scanning")
+        XCTAssertTrue(bodies.contains("nutrition facts") || bodies.contains("nutrition label"),
+                      "the tour should cover reading a nutrition label")
+    }
+
+    // MARK: - Practice data
+
+    /// A mistyped digit would sail through review and then 404 in the middle of
+    /// a demo, looking exactly like a broken lookup. The check digit catches it
+    /// here instead, without a network call.
+    func testEveryPracticeBarcodeIsAValidEAN13() {
+        for practice in DemoMode.practiceBarcodes {
+            let digits = practice.code.compactMap { $0.wholeNumberValue }
+            XCTAssertEqual(digits.count, 13, "\(practice.name): EAN-13 codes have 13 digits")
+            guard digits.count == 13 else { continue }
+
+            let sum = (0..<12).reduce(0) { $0 + digits[$1] * ($1.isMultiple(of: 2) ? 1 : 3) }
+            XCTAssertEqual((10 - sum % 10) % 10, digits[12],
+                           "\(practice.name) (\(practice.code)) has a bad check digit")
+        }
+    }
+
+    func testPracticeBarcodesAreDistinctAndCoverTheUnknownCase() {
+        let codes = DemoMode.practiceBarcodes.map(\.code)
+
+        XCTAssertGreaterThanOrEqual(codes.count, 3)
+        XCTAssertEqual(Set(codes).count, codes.count, "a duplicated code wastes a practice slot")
+        XCTAssertTrue(
+            DemoMode.practiceBarcodes.contains { $0.name.localizedCaseInsensitiveContains("unknown") },
+            "one code must be absent from the database, or the fallback can never be demonstrated"
+        )
+    }
 }

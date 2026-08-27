@@ -429,9 +429,14 @@ final class LogMealViewModel: ObservableObject {
 
     /// Whole numbers without a trailing ".0" — these land in a text field the
     /// user is about to edit, and "48" is easier to correct than "48.0".
+    ///
+    /// A half gram is kept, though. Labels really do print "Total Fat 3.5g",
+    /// and rounding that to 4 on the way into the form would throw away
+    /// precision the label actually stated — "3.5" is no harder to correct.
     private static func field(_ value: Double) -> String {
-        let rounded = value.rounded()
-        return String(Int(max(0, rounded)))
+        let clamped = max(0, value)
+        guard clamped != clamped.rounded() else { return String(Int(clamped)) }
+        return String(format: "%.1f", clamped)
     }
 
     private func loadVocabulary() async -> FoodVocabulary? {

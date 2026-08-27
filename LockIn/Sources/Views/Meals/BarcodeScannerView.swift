@@ -11,8 +11,38 @@ import AudioToolbox
 ///
 /// Nothing is recorded. Frames are inspected for barcode metadata by the
 /// system and discarded — no capture output, no file, no photo library.
-struct BarcodeScannerView: UIViewControllerRepresentable {
+struct BarcodeScannerView: View {
     /// Called once, with the first code found, then the scanner stops.
+    let onScan: (String) -> Void
+
+    /// Whether tapping "Scan a barcode" can lead anywhere, so the button isn't
+    /// offered on hardware that can't honour it.
+    static var isAvailable: Bool {
+        if CameraCaptureView.isAvailable { return true }
+        #if DEBUG
+        // Without this the single most accurate lookup in the app is the one
+        // path that can never be exercised on a simulator — including during
+        // the guided demo. Practice codes stand in for the camera there.
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    var body: some View {
+        if CameraCaptureView.isAvailable {
+            BarcodeCameraView(onScan: onScan).ignoresSafeArea()
+        } else {
+            #if DEBUG
+            PracticeBarcodeView(onScan: onScan)
+            #else
+            NoCameraView()
+            #endif
+        }
+    }
+}
+
+private struct BarcodeCameraView: UIViewControllerRepresentable {
     let onScan: (String) -> Void
 
     func makeUIViewController(context: Context) -> BarcodeScannerController {
@@ -23,6 +53,92 @@ struct BarcodeScannerView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: BarcodeScannerController, context: Context) {}
 }
+
+#if !DEBUG
+/// Shown only on a release build with no usable camera, which in practice
+/// means a device that has one but is blocked from using it.
+private struct NoCameraView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            Theme.ground.ignoresSafeArea()
+            VStack(spacing: 14) {
+                Image(systemName: "camera.fill").font(.system(size: 34))
+                    .foregroundStyle(Theme.inkMuted)
+                Text("No camera available")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                Text("Scan the nutrition label from a saved photo instead, or type the numbers in.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.inkMuted)
+                    .multilineTextAlignment(.center)
+                Button("Close") { dismiss() }.padding(.top, 8)
+            }
+            .padding(32)
+        }
+    }
+}
+#endif
+
+#if DEBUG
+/// Stand-in for the camera on the simulator: the practice codes, tappable.
+///
+/// These aren't canned responses — each one is a real EAN-13 that goes to the
+/// live Open Food Facts API, so what comes back is the same thing a scan of
+/// the physical box would return. `LockIn/Tools/make_practice_labels.py`
+/// renders the matching scannable sheet for testing on real hardware.
+private struct PracticeBarcodeView: View {
+    @Environment(\.dismiss) private var dismiss
+    let onScan: (String) -> Void
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.ground.ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("No camera on the simulator. Pick a code to look up for real.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.inkMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        ForEach(DemoMode.practiceBarcodes) { practice in
+                            Button {
+                                Haptics.tap()
+                                onScan(practice.code)
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(practice.name)
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(Theme.ink)
+                                    Text(practice.code)
+                                        .font(Theme.mono(11))
+                                        .foregroundStyle(Theme.inkMuted)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(14)
+                                .background(Theme.surface)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(Theme.gutter)
+                }
+            }
+            .navigationTitle("Practice barcodes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.foregroundStyle(Theme.inkMuted)
+                }
+            }
+        }
+    }
+}
+#endif
 
 final class BarcodeScannerController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
     var onScan: ((String) -> Void)?

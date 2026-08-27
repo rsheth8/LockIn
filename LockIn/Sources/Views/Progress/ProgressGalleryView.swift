@@ -221,7 +221,7 @@ struct ProgressGalleryView: View {
     }
 
     private func launchCamera() {
-        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+        if CameraCaptureView.isAvailable {
             Haptics.tap()
             showingCamera = true
         } else {

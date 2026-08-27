@@ -79,6 +79,33 @@ enum DemoMode {
             )
         ]
     }
+
+    /// A barcode worth practising on, and what it should come back as.
+    struct PracticeBarcode: Identifiable {
+        let code: String
+        let name: String
+        var id: String { code }
+    }
+
+    /// Real product codes for exercising the barcode scanner.
+    ///
+    /// Deliberately not canned nutrition: these go to the live Open Food Facts
+    /// API like any other scan, so a practice lookup proves the whole path —
+    /// network, decode, serving weight, portion default — rather than a
+    /// hard-coded answer that would still "work" with the client broken.
+    ///
+    /// Each one earns its place by covering a different case, and the last is
+    /// a valid EAN-13 that genuinely isn't catalogued, so the "unknown code,
+    /// scan the label instead" fallback can be seen rather than assumed.
+    /// `LockIn/Tools/make_practice_labels.py` renders these as scannable
+    /// symbols for testing on a real device.
+    static let practiceBarcodes: [PracticeBarcode] = [
+        PracticeBarcode(code: "0096619160754", name: "Kirkland Signature chewy protein bar"),
+        PracticeBarcode(code: "0888849000012", name: "Quest bar — cookie dough"),
+        PracticeBarcode(code: "0894700010045", name: "Chobani Greek yogurt, strawberry"),
+        PracticeBarcode(code: "0030000010204", name: "Quaker old fashioned oats"),
+        PracticeBarcode(code: "0765432109874", name: "Unknown code — falls back to the label")
+    ]
 }
 
 /// One stop on the guided tour. `tab` drives `DashboardView`'s selection via
@@ -100,13 +127,14 @@ final class DemoTourController: ObservableObject {
         DemoTourStep(tab: 0, title: "Coach line", body: "Miss a critical event and the accountability engine speaks up in the tone you picked at onboarding — gentle, tough-love, or hardcore. It stays silent otherwise; constant chatter would make the real hits land softer."),
         DemoTourStep(tab: 0, title: "Meals & macros", body: "Every meal is weighed in grams to hit today's protein/fat/carb targets, pulled from the built-in food database or live Spoonacular recipes — swipe a meal to confirm or mark it missed."),
         DemoTourStep(tab: 0, title: "Ate something else?", body: "Real life happens. \"Log a meal\" up top works any time, and every planned meal has an \"Ate something else\" option. Snap or upload a photo and it's identified on-device against ~720 foods from every major cuisine — then you pick the portion, because no photo can measure grams. See the shawarma under Off Plan."),
-        DemoTourStep(tab: 0, title: "Packaged & mixed meals", body: "A barcode gets the manufacturer's own numbers from millions of products. No barcode? Photograph the nutrition label and it's read on-device, no internet. And when one label can't describe a meal — the Yogurt bowl below is yogurt, granola, banana and a whey scoop — you stack the parts and they're added up. Every number is tap-to-edit, before or after saving."),
+        DemoTourStep(tab: 0, title: "Scan the box", body: "Packaged food gets two routes of its own — open \"Log a meal\" and try them. A barcode is the most accurate lookup in the app: it names one exact product, so there's no guessing at all. You get the manufacturer's own numbers from a database of millions — Costco and Trader Joe's included — and it opens at that product's real serving, so a 40 g bar is a 40 g bar and not a generic 200 g. No barcode, or a code nobody has catalogued yet? Photograph the Nutrition Facts panel instead: that's read right here on the device, with no key, no quota and no internet. It always hands you an editable form rather than a finished answer, because OCR on a crumpled foil pouch genuinely does misread."),
+        DemoTourStep(tab: 0, title: "Meals made of several things", body: "When no single label can describe what you ate, stack the parts and they're added up — the Yogurt bowl below is yogurt, granola, banana and a scoop of whey. One photo would have called that \"granola bowl\" and logged 6 g of protein instead of 50, and no better model fixes that, because the scoop isn't visible. Every number anywhere is tap-to-edit, before or after saving, and a meal you've corrected says \"Adjusted by hand\" instead of still crediting the lookup that got it wrong."),
         DemoTourStep(tab: 0, title: "Workout", body: "Today's session is slotted automatically into the largest open gap in your calendar, and rotates through a weekly split built from your active fitness goals — fat loss, fast bowling power work, rucking, whatever you picked."),
         DemoTourStep(tab: 1, title: "Promise grid", body: "Four months of history, one square per day. This is the Ledger's whole thesis: an unbroken wall of kept squares is worth more than any pep talk, and a slump is visible instantly instead of getting rationalized away."),
         DemoTourStep(tab: 1, title: "Streak & weight trend", body: "The current streak resets to zero the moment a critical event is missed — loss aversion, not gold stars. The weight line tracks real HealthKit syncs, rate-limited so a bad scale reading can't fake progress."),
         DemoTourStep(tab: 1, title: "Progress photos", body: "Daily photos live in the app's private sandbox — never the system Photos library, never iCloud backup. Day-1-vs-today compare is one tap away, and the Today tab can launch straight into the camera."),
         DemoTourStep(tab: 2, title: "Settings", body: "Tune the tone (gentle → hardcore), pick an accent color that repaints every surface instantly, and turn on Screen Time shielding — LockIn blocks the apps you pick for the duration of today's workout window automatically."),
-        DemoTourStep(tab: 2, title: "That's the whole app", body: "Sign-in, a quiz-driven onboarding, and everything you just clicked through — all built on 212 tests covering the metabolic math, meal assembly, scheduling, and accountability copy. Tap Exit demo any time to get back to your own account.")
+        DemoTourStep(tab: 2, title: "That's the whole app", body: "Sign-in, a quiz-driven onboarding, and everything you just clicked through — all built on 219 tests covering the metabolic math, meal assembly, scheduling, and accountability copy. Tap Exit demo any time to get back to your own account.")
     ]
 
     var current: DemoTourStep { steps[stepIndex] }

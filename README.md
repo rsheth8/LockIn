@@ -102,7 +102,7 @@ cd LockIn && xcodebuild -project LockIn.xcodeproj -scheme LockIn \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-212 tests covering the metabolic engine (BMR pinned to hand-computed
+219 tests covering the metabolic engine (BMR pinned to hand-computed
 Mifflin-St Jeor values, safety floors swept across ~300 body/sex combinations,
 macros proven never negative), meal assembly and macro fitting, sleep and
 schedule construction, streak/adherence logic, accountability copy, cache
@@ -181,10 +181,31 @@ and matching them back up by vertical position is what makes the parse work),
 then extracts calories, protein, fat, carbs and the serving size. No key, no
 quota, no network.
 
+Both US label formats are handled. The pre-2016 panel prints "Calories 140" and
+"Calories from Fat 30" *side by side*, so they reach the parser as one row —
+discarding any row mentioning "from fat" made every label in that format read as
+unreadable, which is a lot of what's still on shelves. Only the from-fat clause
+is dropped now.
+
 It always lands on the editable form rather than a finished result, labelled
 "read 3 of 4 off the label" — OCR on curved, glossy or crumpled packaging does
 misread, and a number nobody has looked at is exactly the fake precision the
 rest of this flow avoids.
+
+**Practice data.** `LockIn/Tools/make_practice_labels.py` renders three
+Nutrition Facts panels (both formats) plus a sheet of real, scannable EAN-13
+symbols for products that are actually in Open Food Facts:
+
+```bash
+python3 LockIn/Tools/make_practice_labels.py --out /tmp/practice
+xcrun simctl addmedia booted /tmp/practice/label_*.png
+```
+
+The simulator has no camera, so on a DEBUG build "Scan a barcode" offers
+`DemoMode.practiceBarcodes` instead of a black viewfinder. Those still hit the
+live API — a canned response would keep "working" with the client broken. One of
+them is a valid code that genuinely isn't catalogued, so the fallback to label
+scanning can be seen rather than assumed.
 
 **Chain restaurants** are covered via Spoonacular's menu-item database — Chili's,
 Moe's, Jersey Mike's, Panera and a few hundred others, with published figures
@@ -301,9 +322,12 @@ The sign-in screen has a DEBUG-only "Watch the demo" button
 (`Sources/Engines/DemoMode.swift`, `Sources/Views/Demo/DemoTourOverlay.swift`)
 that seeds a full session in memory — Rahil's preset profile, ~4 months of
 promise-grid history, and today's schedule with a realistic mix of
-confirmed/pending/missed events — then walks a 9-step guided tour across all
+confirmed/pending/missed events — then walks a 12-step guided tour across all
 three tabs (Today, Record, Settings), switching tabs automatically as it
-narrates each feature. It never touches `PersistenceStore`, so "Exit demo"
+narrates each feature. Three of those steps cover meal logging, one each for the
+routes that differ in kind: photo recognition, scanning a box (barcode and
+label), and building a meal from parts. It never touches `PersistenceStore`, so
+"Exit demo"
 (available on every step) drops straight back to the real sign-in/account
 state with nothing overwritten. Debug builds only — stripped entirely from
 release.

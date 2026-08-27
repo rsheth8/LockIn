@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import AVFoundation
 
 /// Thin UIKit bridge for camera capture — SwiftUI has no native camera control,
 /// so this wraps UIImagePickerController pinned to .camera (never the photo
@@ -7,6 +8,15 @@ import UIKit
 struct CameraCaptureView: UIViewControllerRepresentable {
     var onCapture: (UIImage) -> Void
     @Environment(\.dismiss) private var dismiss
+
+    /// Whether offering "Take a photo" is honest.
+    ///
+    /// Not `UIImagePickerController.isSourceTypeAvailable(.camera)`, which the
+    /// callers used to ask and which answers *true* on a simulator that has no
+    /// capture device at all — so every "hidden where there's no camera" guard
+    /// in the app was quietly failing open onto a dead black sheet. Asking for
+    /// the device itself is the question that has a real answer.
+    static var isAvailable: Bool { AVCaptureDevice.default(for: .video) != nil }
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
