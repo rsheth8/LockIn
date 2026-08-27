@@ -2,6 +2,8 @@ import Foundation
 
 enum EventKind: String, Codable {
     case wake, caffeine, meal, mealPrep, workout, windDown, sleep, weighIn, progressPhoto, hydration, custom
+    case classSession   // a scheduled class, drawn from the term schedule
+    case commute        // "leave by" nudge before the first class of the day
 }
 
 struct ScheduledEvent: Codable, Identifiable, Equatable {

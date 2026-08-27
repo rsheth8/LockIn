@@ -38,6 +38,26 @@ final class AppState: ObservableObject {
         self.dayRecords = store.loadDayRecords()
         self.loggedMeals = store.loadLoggedMeals()
         self.shoppingList = store.loadShoppingList()
+        backfillScheduleInputsIfNeeded()
+#if DEBUG
+        // Dev affordance: open straight onto a preview day. Lets a class day be
+        // inspected before the term starts without tapping the day nav.
+        if let raw = ProcessInfo.processInfo.environment["LOCKIN_PREVIEW_OFFSET"], let n = Int(raw) {
+            self.previewOffset = n
+        }
+#endif
+    }
+
+    /// Profiles saved before the class-schedule / rhythm redesign have no term
+    /// schedule, so the planner can't draw class blocks. Seed the known Fall
+    /// 2026 schedule and the standard rhythm once, then persist. Idempotent —
+    /// the guard fails on every launch after the first.
+    private func backfillScheduleInputsIfNeeded() {
+        guard !RuntimeEnvironment.isRunningUnitTests, onboardingComplete else { return }
+        guard profile.termScheduleRaw == nil else { return }
+        profile.termScheduleRaw = .rahilFall2026
+        if profile.rhythmRaw == nil { profile.rhythmRaw = .standard }
+        persistProfile(profile)
     }
 
     /// Pulls an existing plan out of the signed-in user's private iCloud —
@@ -73,9 +93,33 @@ final class AppState: ObservableObject {
     /// the card never goes blank mid-evening.
     var currentEvent: ScheduledEvent? {
         guard let events = todaySchedule?.events else { return nil }
-        let pending = events.filter { $0.status == .pending || $0.status == .snoozed }
+        // Classes and the leave-by nudge are fixed structure, not promises to
+        // tick off — they never take the hero card.
+        let actionable = events.filter { $0.kind != .classSession && $0.kind != .commute }
+        let pending = actionable.filter { $0.status == .pending || $0.status == .snoozed }
         return pending.min(by: { abs($0.time.timeIntervalSinceNow) < abs($1.time.timeIntervalSinceNow) })
-            ?? events.last
+            ?? actionable.last
+    }
+
+    // MARK: - Day preview
+
+    /// How many days the Today view is currently looking ahead (0 = today).
+    /// Lets the user flip forward to see a class day before the term starts.
+    @Published var previewOffset: Int = 0
+
+    var previewDate: Date {
+        Calendar.current.date(byAdding: .day, value: previewOffset, to: Date()) ?? Date()
+    }
+
+    /// The schedule to render: the live, persisted plan when on today, otherwise
+    /// a freshly built (non-persisted) preview for the offset day.
+    var displayedSchedule: DaySchedule? {
+        guard previewOffset != 0 else { return todaySchedule }
+        let date = previewDate
+        let macros = MetabolicEngine.dailyTargets(for: profile)
+        let sleep = SleepEngine.plan(for: profile, busyBlocks: [], date: date)
+        return ScheduleEngine.buildDay(profile: profile, macros: macros, sleepPlan: sleep,
+                                       busyBlocks: [], date: date)
     }
 
     var criticalEventsToday: [ScheduledEvent] {

@@ -27,11 +27,12 @@ struct TodayView: View {
         ZStack {
             Theme.ground.ignoresSafeArea()
 
-            if let schedule = appState.todaySchedule {
+            if let schedule = appState.displayedSchedule {
+                let isPreview = appState.previewOffset != 0
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 24) {
                         header
-                        if let event = appState.currentEvent {
+                        if !isPreview, let event = appState.currentEvent {
                             HeroCard(
                                 event: event,
                                 onConfirm: { confirm(event) },
@@ -42,14 +43,14 @@ struct TodayView: View {
                                 onTapDetail: { if event.kind == .progressPhoto { onOpenProgressPhoto() } }
                             )
                         }
-                        if let coach = appState.coachLine {
+                        if !isPreview, let coach = appState.coachLine {
                             coachCallout(coach)
                         }
                         vitals(schedule: schedule)
-                        if !appState.loggedMealsToday.isEmpty {
+                        if !isPreview, !appState.loggedMealsToday.isEmpty {
                             loggedMealsSection
                         }
-                        timeline(schedule: schedule)
+                        timeline(schedule: schedule, interactive: !isPreview)
                     }
                     .padding(.horizontal, Theme.gutter)
                     // Clears the floating tab bar so the last event isn't trapped under it.
@@ -84,8 +85,7 @@ struct TodayView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(Date(), format: .dateTime.weekday(.abbreviated).day().month(.abbreviated))
-                .ledgerLabel()
+            dayNav
             Spacer()
             // Always reachable — eating off-plan is the common case, and it
             // shouldn't require finding the right meal row first.
@@ -115,6 +115,53 @@ struct TodayView: View {
                 .padding(.leading, 10)
         }
         .padding(.top, 8)
+    }
+
+    /// Date label with prev/next chevrons so the day can be scrubbed forward to
+    /// preview a class day (useful before the term starts). Tapping the label
+    /// snaps back to today.
+    private var dayNav: some View {
+        HStack(spacing: 8) {
+            Button {
+                Haptics.tap()
+                appState.previewOffset -= 1
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Theme.inkMuted)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                Haptics.tap()
+                appState.previewOffset = 0
+            } label: {
+                Text(appState.previewDate, format: .dateTime.weekday(.abbreviated).day().month(.abbreviated))
+                    .ledgerLabel()
+                    .foregroundStyle(appState.previewOffset == 0 ? Theme.inkMuted : accent.color)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                Haptics.tap()
+                appState.previewOffset += 1
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Theme.inkMuted)
+            }
+            .buttonStyle(.plain)
+
+            if appState.previewOffset != 0 {
+                Text("PREVIEW")
+                    .font(Theme.mono(9, weight: .semibold))
+                    .tracking(Theme.labelTracking)
+                    .foregroundStyle(accent.color)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .overlay(Capsule().strokeBorder(accent.color.opacity(0.4), lineWidth: 1))
+            }
+        }
     }
 
     // MARK: - Off-plan meals
@@ -248,21 +295,22 @@ struct TodayView: View {
 
     // MARK: - Timeline
 
-    private func timeline(schedule: DaySchedule) -> some View {
+    private func timeline(schedule: DaySchedule, interactive: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("The Day").ledgerLabel().padding(.bottom, 10)
             ForEach(schedule.events) { event in
                 TimelineRow(
                     event: event,
-                    isCurrent: event.id == appState.currentEvent?.id,
+                    isCurrent: interactive && event.id == appState.currentEvent?.id,
+                    interactive: interactive,
                     onConfirm: { confirm(event) },
                     onSkip: { skip(event) },
-                    onAteSomethingElse: event.kind == .meal
+                    onAteSomethingElse: interactive && event.kind == .meal
                         ? { logTarget = LogTarget(event: event) }
                         : nil
                 )
                 .onTapGesture {
-                    if event.kind == .progressPhoto {
+                    if interactive, event.kind == .progressPhoto {
                         Haptics.tap()
                         onOpenProgressPhoto()
                     }
@@ -390,9 +438,14 @@ private struct HeroCard: View {
 private struct TimelineRow: View {
     let event: ScheduledEvent
     let isCurrent: Bool
+    var interactive: Bool = true
     let onConfirm: () -> Void
     let onSkip: () -> Void
     let onAteSomethingElse: (() -> Void)?
+
+    /// Classes and the leave-by nudge are fixed scaffolding — shown, but with no
+    /// check-off affordance and a plainer marker.
+    private var isStructural: Bool { event.kind == .classSession || event.kind == .commute }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -424,7 +477,7 @@ private struct TimelineRow: View {
 
             // Pending rows carry their own confirm affordance so you can clear
             // anything from the timeline without scrolling back to the hero card.
-            if event.status == .pending || event.status == .snoozed {
+            if interactive, !isStructural, event.status == .pending || event.status == .snoozed {
                 Button(action: onConfirm) {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .bold))
@@ -452,15 +505,19 @@ private struct TimelineRow: View {
     /// load-bearing promises first.
     private var marker: some View {
         Group {
-            switch event.status {
-            case .confirmed:
-                Circle().fill(Theme.kept)
-            case .missed:
-                Circle().fill(Theme.signal)
-            case .pending, .snoozed:
-                Circle()
-                    .strokeBorder(isCurrent ? Theme.ink : Theme.inkFaint,
-                                  lineWidth: event.isCritical ? 2 : 1)
+            if isStructural {
+                Circle().fill(Theme.inkFaint)
+            } else {
+                switch event.status {
+                case .confirmed:
+                    Circle().fill(Theme.kept)
+                case .missed:
+                    Circle().fill(Theme.signal)
+                case .pending, .snoozed:
+                    Circle()
+                        .strokeBorder(isCurrent ? Theme.ink : Theme.inkFaint,
+                                      lineWidth: event.isCritical ? 2 : 1)
+                }
             }
         }
         .frame(width: event.isCritical ? 9 : 6, height: event.isCritical ? 9 : 6)

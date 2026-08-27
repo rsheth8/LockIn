@@ -150,6 +150,15 @@ struct UserProfile: Codable, Equatable, Identifiable {
     /// Read it through `shoppingPriority`.
     var shoppingPriorityRaw: ShoppingPriority?
 
+    /// The term's class schedule, if set up. The planner emits these as blocks
+    /// and fits meals/workouts around them. Optional for the same
+    /// decode-compatibility reason as `shoppingPriorityRaw`.
+    var termScheduleRaw: TermSchedule?
+
+    /// Chronotype and training rhythm. Read through `rhythm`, which falls back
+    /// to `RhythmPreference.standard` when unset.
+    var rhythmRaw: RhythmPreference?
+
     /// A blank profile for someone starting the quiz — intentionally neutral
     /// rather than pre-filled with one person's situation.
     static var blank: UserProfile {
@@ -176,7 +185,9 @@ struct UserProfile: Codable, Equatable, Identifiable {
             accentColor: .ember,
             accountabilityMode: [.scheduledCheckIns],
             weightHistory: [],
-            shoppingPriorityRaw: nil
+            shoppingPriorityRaw: nil,
+            termScheduleRaw: nil,
+            rhythmRaw: nil
         )
     }
 
@@ -186,6 +197,16 @@ struct UserProfile: Codable, Equatable, Identifiable {
         get { shoppingPriorityRaw ?? .balanced }
         set { shoppingPriorityRaw = newValue }
     }
+
+    /// Chronotype/training rhythm, falling back to the shared default when the
+    /// profile predates the setting.
+    var rhythm: RhythmPreference {
+        get { rhythmRaw ?? .standard }
+        set { rhythmRaw = newValue }
+    }
+
+    /// The class schedule the planner should build around, if one has been set.
+    var termSchedule: TermSchedule? { termScheduleRaw }
 
     /// Rahil's preset — used by the "start from a preset" path so an existing
     /// setup can be handed to someone without re-running the whole quiz.
@@ -206,6 +227,8 @@ struct UserProfile: Codable, Equatable, Identifiable {
         profile.cuisinePreference = .southAsian
         profile.toneIntensity = .toughLove
         profile.accountabilityMode = [.scheduledCheckIns, .screenTime]
+        profile.termScheduleRaw = .rahilFall2026
+        profile.rhythmRaw = .standard
         return profile
     }
 }

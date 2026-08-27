@@ -20,6 +20,8 @@ enum Fixture {
         p.cuisinePreference = .southAsian
         p.fitnessGoals = [.fatLoss, .fastBowling, .hikingBackpacking]
         p.mealsPerDay = 4
+        p.termScheduleRaw = .rahilFall2026
+        p.rhythmRaw = .standard
         return p
     }
 

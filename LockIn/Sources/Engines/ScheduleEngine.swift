@@ -1,30 +1,80 @@
 import Foundation
 
-/// Assembles the full day's timeline: wake -> caffeine -> meals (+ prep reminders,
-/// scheduled earlier when a food needs soak/marinate/cook lead time) -> workout
-/// slotted into the largest open gap between calendar busy blocks -> wind-down -> sleep.
+/// Assembles the day's timeline around fixed anchors.
+///
+/// Order of operations: wake/bed come from `SleepPlan` (a fixed rhythm, not the
+/// calendar). Classes from the term schedule are laid down as blocks, with a
+/// "leave by" nudge before the first one. Meals are then fitted to the gaps —
+/// lunch before an afternoon class, not on top of it — and the workout is
+/// placed near its preferred time of day on training days only, never
+/// overlapping a class or a calendar commitment. Weigh-in and progress photo
+/// run weekly, on Mondays.
 enum ScheduleEngine {
-    /// `liveMeals` carries Spoonacular results when they're available; passing
-    /// nil falls back to the built-in database so the day always builds.
-    static func buildDay(profile: UserProfile, macros: MacroTargets, sleepPlan: SleepPlan, busyBlocks: [BusyBlock], date: Date, liveMeals: [Meal]? = nil) -> DaySchedule {
+    /// `liveMeals` carries Spoonacular results when available; nil falls back to
+    /// the built-in database so the day always builds.
+    static func buildDay(profile: UserProfile, macros: MacroTargets, sleepPlan: SleepPlan,
+                         busyBlocks: [BusyBlock], date: Date, liveMeals: [Meal]? = nil) -> DaySchedule {
         let calendar = Calendar.current
         var events: [ScheduledEvent] = []
 
-        events.append(ScheduledEvent(kind: .wake, title: "Wake up", detail: "Get up, no snooze — hit the light.", time: sleepPlan.targetWakeTime, durationMinutes: 10, isCritical: true))
+        // MARK: Wake + coffee
+        events.append(ScheduledEvent(kind: .wake, title: "Wake up",
+            detail: "Get up, no snooze — hit the light.",
+            time: sleepPlan.targetWakeTime, durationMinutes: 10, isCritical: true))
 
-        let caffeineTime = calendar.date(byAdding: .minute, value: 30, to: sleepPlan.targetWakeTime)!
-        events.append(ScheduledEvent(kind: .caffeine, title: "Coffee", detail: "Black or low-cal — mind the caffeine cutoff tonight.", time: caffeineTime, durationMinutes: 15, isCritical: false))
+        events.append(ScheduledEvent(kind: .caffeine, title: "Coffee",
+            detail: "Black or low-cal — nothing caffeinated after \(clock(sleepPlan.caffeineCutoff)).",
+            time: calendar.date(byAdding: .minute, value: 30, to: sleepPlan.targetWakeTime)!,
+            durationMinutes: 15, isCritical: false))
 
-        events.append(ScheduledEvent(kind: .weighIn, title: "Weigh-in", detail: "Same time, same conditions, every day — trend matters more than one reading.", time: calendar.date(byAdding: .minute, value: 5, to: sleepPlan.targetWakeTime)!, durationMinutes: 2, isCritical: true))
+        // MARK: Classes + leave-by
+        let sessions = profile.termSchedule?.sessions(on: date, calendar: calendar) ?? []
+        for session in sessions {
+            let minutes = Int(session.end.timeIntervalSince(session.start) / 60)
+            events.append(ScheduledEvent(kind: .classSession, title: session.meeting.courseCode,
+                detail: "\(session.meeting.title)\n\(session.meeting.location)",
+                time: session.start, durationMinutes: minutes, isCritical: false))
+        }
+        if let first = sessions.first, let term = profile.termSchedule {
+            let leaveBy = calendar.date(byAdding: .minute, value: -term.leadMinutes, to: first.start)!
+            events.append(ScheduledEvent(kind: .commute, title: "Leave for campus",
+                detail: "\(term.commuteMinutes) min there, \(term.prepMinutes) to get ready. First up: \(first.meeting.courseCode) at \(clock(first.start)).",
+                time: leaveBy, durationMinutes: term.commuteMinutes, isCritical: false))
+        }
 
-        events.append(ScheduledEvent(kind: .progressPhoto, title: "Progress photo", detail: "Same spot, same lighting, same pose as yesterday — open Progress tab. This is the evidence, not the scale.", time: calendar.date(byAdding: .minute, value: 8, to: sleepPlan.targetWakeTime)!, durationMinutes: 2, isCritical: false))
+        // MARK: Weigh-in + progress photo — Mondays only
+        if calendar.component(.weekday, from: date) == 2 {
+            events.append(ScheduledEvent(kind: .weighIn, title: "Weigh-in",
+                detail: "Same time, same conditions — first thing, after the bathroom, before you eat. The trend is the signal.",
+                time: calendar.date(byAdding: .minute, value: 5, to: sleepPlan.targetWakeTime)!,
+                durationMinutes: 2, isCritical: true))
+            events.append(ScheduledEvent(kind: .progressPhoto, title: "Progress photo",
+                detail: "Same spot, same light, same pose as last week — open the Progress tab. Weekly, so the change is actually visible.",
+                time: calendar.date(byAdding: .minute, value: 8, to: sleepPlan.targetWakeTime)!,
+                durationMinutes: 2, isCritical: false))
+        }
 
+        // MARK: Meal times
         let meals = liveMeals ?? MealEngine.buildDay(macros: macros, profile: profile)
+        let breakfast = calendar.date(byAdding: .minute, value: 45, to: sleepPlan.targetWakeTime)!
+        let lunch = lunchTime(sessions: sessions, term: profile.termSchedule, date: date, calendar: calendar)
+        let dinner = calendar.date(bySettingHour: 19, minute: 15, second: 0, of: date)!
+
+        // Workout is placed before meals so the post-workout snack can hang off it.
+        let classBusy = sessions.map { BusyBlock(title: $0.meeting.courseCode, start: $0.start, end: $0.end) }
+        var workoutTime: Date?
+        if profile.rhythm.trainsOn(date, calendar: calendar) {
+            let target = workoutTarget(sessions: sessions, lunch: lunch, date: date, calendar: calendar)
+            workoutTime = findWorkoutSlot(busyBlocks: busyBlocks + classBusy, date: date,
+                                          target: target, calendar: calendar)
+        }
+
+        let snack: Date = workoutTime
+            .map { calendar.date(byAdding: .minute, value: 75, to: $0)! }
+            ?? calendar.date(bySettingHour: 16, minute: 0, second: 0, of: date)!
+
         let mealTimes: [MealSlot: Date] = [
-            .breakfast: calendar.date(byAdding: .minute, value: 45, to: sleepPlan.targetWakeTime)!,
-            .lunch: calendar.date(bySettingHour: 13, minute: 0, second: 0, of: date)!,
-            .snack: calendar.date(bySettingHour: 16, minute: 30, second: 0, of: date)!,
-            .dinner: calendar.date(bySettingHour: 19, minute: 30, second: 0, of: date)!
+            .breakfast: breakfast, .lunch: lunch, .snack: snack, .dinner: dinner
         ]
 
         for meal in meals {
@@ -43,52 +93,98 @@ enum ScheduleEngine {
                     return "\(c.food.name): \(instr)"
                 }.joined(separator: "\n")
                 if !prepItems.isEmpty {
-                    events.append(ScheduledEvent(kind: .mealPrep, title: "Prep for \(meal.name)", detail: prepItems, time: prepTime, durationMinutes: 15, isCritical: false, linkedMealID: meal.id))
+                    events.append(ScheduledEvent(kind: .mealPrep, title: "Prep for \(meal.name)",
+                        detail: prepItems, time: prepTime, durationMinutes: 15,
+                        isCritical: false, linkedMealID: meal.id))
                 }
             }
         }
 
-        // Workout: find the largest free gap between 2pm-9pm that fits 60 min, avoiding busy blocks.
-        // Session content rotates through WorkoutEngine's split based on active FitnessGoals
-        // (fat loss + fast bowling + hiking/backpacking all pull from the same weekly plan).
-        if let workoutTime = findWorkoutSlot(busyBlocks: busyBlocks, date: date) {
+        // MARK: Workout content
+        if let workoutTime {
             let session = WorkoutEngine.session(for: date, goals: profile.fitnessGoals)
-            let goalTagLine = session.goalTags.filter { profile.fitnessGoals.contains($0) }.map { $0.displayName }.joined(separator: " · ")
+            let goalTagLine = session.goalTags.filter { profile.fitnessGoals.contains($0) }
+                .map { $0.displayName }.joined(separator: " · ")
             let detail = "\(session.summaryLine)\n\(session.equipmentNote)\nServes: \(goalTagLine)"
-            events.append(ScheduledEvent(kind: .workout, title: session.focus.title, detail: detail, time: workoutTime, durationMinutes: 60, isCritical: true))
+            events.append(ScheduledEvent(kind: .workout, title: session.focus.title,
+                detail: detail, time: workoutTime, durationMinutes: 60, isCritical: true))
         }
 
-        events.append(ScheduledEvent(kind: .windDown, title: "Wind down", detail: "Screens off, lights dim. This is non-negotiable for sleep quality.", time: sleepPlan.windDownStart, durationMinutes: 45, isCritical: true))
-        events.append(ScheduledEvent(kind: .sleep, title: "Sleep", detail: "Lights out. Tomorrow starts now.", time: sleepPlan.targetBedTime, durationMinutes: 0, isCritical: true))
+        // MARK: Wind-down + sleep
+        events.append(ScheduledEvent(kind: .windDown, title: "Wind down",
+            detail: "Screens off, lights dim. Non-negotiable for sleep quality.",
+            time: sleepPlan.windDownStart, durationMinutes: 45, isCritical: true))
+        events.append(ScheduledEvent(kind: .sleep, title: "Sleep",
+            detail: "Lights out. Tomorrow starts now.",
+            time: sleepPlan.targetBedTime, durationMinutes: 0, isCritical: true))
 
         events.sort { $0.time < $1.time }
         return DaySchedule(date: date, events: events, macros: macros, sleepPlan: sleepPlan)
     }
 
-    private static func findWorkoutSlot(busyBlocks: [BusyBlock], date: Date) -> Date? {
-        let calendar = Calendar.current
-        let windowStart = calendar.date(bySettingHour: 14, minute: 0, second: 0, of: date)!
-        let windowEnd = calendar.date(bySettingHour: 21, minute: 0, second: 0, of: date)!
-        let relevant = busyBlocks.filter { $0.end > windowStart && $0.start < windowEnd }.sorted { $0.start < $1.start }
+    // MARK: - Helpers
 
-        var cursor = windowStart
-        var bestGapStart: Date?
-        var bestGapLength: TimeInterval = 0
+    private static func clock(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        return f.string(from: date)
+    }
 
-        func considerGap(_ start: Date, _ end: Date) {
-            let length = end.timeIntervalSince(start)
-            if length >= 60 * 60 && length > bestGapLength {
-                bestGapLength = length
-                bestGapStart = start
-            }
+    /// Lunch lands before the first afternoon class on stacked days, just after
+    /// a late-morning class on light days, else a plain midday slot.
+    private static func lunchTime(sessions: [(meeting: ClassMeeting, start: Date, end: Date)],
+                                  term: TermSchedule?, date: Date, calendar: Calendar) -> Date {
+        let midday = calendar.date(bySettingHour: 12, minute: 45, second: 0, of: date)!
+        guard !sessions.isEmpty, let term else { return midday }
+
+        if let afternoon = sessions.first(where: { calendar.component(.hour, from: $0.start) >= 12 }) {
+            let before = calendar.date(byAdding: .minute, value: -(term.leadMinutes + 25), to: afternoon.start)!
+            return min(before, midday)
         }
+        if let lastMorning = sessions.last {
+            return calendar.date(byAdding: .minute, value: 20, to: lastMorning.end)!
+        }
+        return midday
+    }
 
+    /// Where the workout wants to land: right after the last class on days that
+    /// run into the afternoon, otherwise just after lunch on lighter days.
+    private static func workoutTarget(sessions: [(meeting: ClassMeeting, start: Date, end: Date)],
+                                      lunch: Date, date: Date, calendar: Calendar) -> Date {
+        if let lastClassEnd = sessions.map(\.end).max(),
+           calendar.component(.hour, from: lastClassEnd) >= 15 {
+            return calendar.date(byAdding: .minute, value: 30, to: lastClassEnd)!
+        }
+        return calendar.date(byAdding: .minute, value: 55, to: lunch)!
+    }
+
+    /// A ≥60-min free slot as close to `target` as possible, between noon and
+    /// 21:00, never overlapping a busy block.
+    private static func findWorkoutSlot(busyBlocks: [BusyBlock], date: Date, target: Date,
+                                        calendar: Calendar) -> Date? {
+        let windowStart = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: date)!
+        let windowEnd = calendar.date(bySettingHour: 21, minute: 0, second: 0, of: date)!
+        let need: TimeInterval = 60 * 60
+
+        let relevant = busyBlocks
+            .filter { $0.end > windowStart && $0.start < windowEnd }
+            .sorted { $0.start < $1.start }
+
+        var gaps: [(start: Date, end: Date)] = []
+        var cursor = windowStart
         for block in relevant {
-            if block.start > cursor { considerGap(cursor, block.start) }
+            if block.start > cursor { gaps.append((cursor, block.start)) }
             cursor = max(cursor, block.end)
         }
-        if cursor < windowEnd { considerGap(cursor, windowEnd) }
+        if cursor < windowEnd { gaps.append((cursor, windowEnd)) }
 
-        return bestGapStart
+        let candidates: [Date] = gaps.compactMap { gap in
+            guard gap.end.timeIntervalSince(gap.start) >= need else { return nil }
+            let latestStart = gap.end.addingTimeInterval(-need)
+            return min(max(target, gap.start), latestStart)
+        }
+        return candidates.min(by: {
+            abs($0.timeIntervalSince(target)) < abs($1.timeIntervalSince(target))
+        })
     }
 }
