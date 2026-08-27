@@ -52,7 +52,100 @@ enum SmartChoiceEngine {
 
     // MARK: - Scoring
 
-    static func score(_ item: GroceryItem) -> SmartScore {
+    /// The label's own read, blended with how well the item serves the user's
+    /// targets when a `context` is supplied.
+    ///
+    /// Context is optional because the two questions are genuinely separate: a
+    /// product is high in sugar whoever is looking at it, but whether it earns
+    /// a place in a 180 g-protein day depends entirely on the day. Without a
+    /// context this answers only the first, which is also what keeps the health
+    /// scoring testable on its own.
+    static func score(_ item: GroceryItem, context: GoalContext? = nil) -> SmartScore {
+        let health = healthScore(item)
+        guard let context else { return health }
+
+        let goal = goalFit(item, context: context)
+        let weight = context.priority.goalWeight
+        let blended = Double(goal.value) * weight + Double(health.value) * (1 - weight)
+
+        return SmartScore(
+            value: Int(blended.rounded()),
+            // Goal reasons lead: they're the half the user can't get from the
+            // back of the packet.
+            reasons: goal.reasons + health.reasons,
+            cautions: goal.cautions + health.cautions,
+            confidence: health.confidence
+        )
+    }
+
+    /// How well the item serves the user's macro targets, ignoring the label's
+    /// merits entirely.
+    ///
+    /// Built around protein per calorie rather than protein per 100 g. Per-100 g
+    /// protein flatters anything dry — beef jerky and a protein biscuit look
+    /// alike on it — while the ratio asks the question that actually decides a
+    /// cut: for the calories this costs, how much protein comes back?
+    static func goalFit(_ item: GroceryItem, context: GoalContext)
+        -> (value: Int, reasons: [String], cautions: [String]) {
+        let macros = item.per100g
+        guard macros.calories > 0, context.proteinPerCalorieTarget > 0 else {
+            return (50, [], [])
+        }
+
+        let ratio = macros.proteinG / macros.calories
+        let relative = ratio / context.proteinPerCalorieTarget
+        var reasons: [String] = []
+        var cautions: [String] = []
+
+        var value: Int
+        switch relative {
+        case 1.5...:
+            value = 100
+            reasons.append("Well clear of your target — \(perHundredKcal(ratio)) g per 100 kcal")
+        case 1.0..<1.5:
+            value = 80
+            reasons.append("Pulls its weight on protein — \(perHundredKcal(ratio)) g per 100 kcal")
+        case 0.6..<1.0:
+            value = 55
+        case 0.3..<0.6:
+            value = 35
+            cautions.append("Light on protein for your targets")
+        default:
+            value = 15
+            cautions.append("Almost no protein for the calories")
+        }
+
+        // Calorie density, read through the goal. The same 550 kcal/100 g is a
+        // problem in a deficit and useful in a surplus, so this can't be a
+        // fixed penalty.
+        switch context.direction {
+        case .cut, .recomp:
+            if macros.calories > 400 {
+                value -= 15
+                cautions.append("Calorie-dense — \(Int(macros.calories.rounded())) kcal per 100 g")
+            } else if macros.calories > 250 {
+                value -= 8
+            } else if macros.calories < 120 {
+                value += 8
+                reasons.append("Light on calories — easy to fit in a deficit")
+            }
+        case .gain:
+            if macros.calories > 250 {
+                value += 5
+                reasons.append("Calorie-dense — helps hit a surplus")
+            } else if macros.calories < 120 {
+                value -= 10
+                cautions.append("Very light — hard to hit a surplus on")
+            }
+        case .maintain:
+            break
+        }
+
+        return (min(max(value, 0), 100), reasons, cautions)
+    }
+
+    /// The label's own read, independent of who's looking.
+    static func healthScore(_ item: GroceryItem) -> SmartScore {
         let quality = item.quality
         let protein = item.per100g.proteinG
 
@@ -171,6 +264,12 @@ enum SmartChoiceEngine {
             result.append("\(additives) additives listed")
         }
         return result
+    }
+
+    /// Grams of protein per 100 kcal. The ratio is a fiddly decimal per kcal
+    /// (0.084) and a legible small integer per 100 kcal (8).
+    private static func perHundredKcal(_ ratio: Double) -> String {
+        String(Int((ratio * 100).rounded()))
     }
 
     /// "12 g" / "1.5 g" — trailing zeros dropped, because "22.0 g" reads like a

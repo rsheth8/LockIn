@@ -20,6 +20,7 @@ struct SettingsView: View {
                     accentSection
                     toneSection
                     targetsSection
+                    shopSmartSection
                     screenTimeSection
                     goalsSection
                     accountSection
@@ -154,6 +155,33 @@ struct SettingsView: View {
                 row("Est. to goal", weeks.isFinite ? "\(Int(weeks.rounded())) weeks" : "—")
             }
             Text("Recalculated automatically as your weight drops — nothing here is hand-set.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - Shop Smart
+
+    private var shopSmartSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Shop Smart ranking").ledgerLabel()
+            Picker("Ranking", selection: Binding(
+                get: { appState.profile.shoppingPriority },
+                set: { priority in
+                    Haptics.tap()
+                    var updated = appState.profile
+                    updated.shoppingPriority = priority
+                    appState.saveProfile(updated)
+                }
+            )) {
+                ForEach(ShoppingPriority.allCases) { priority in
+                    Text(priority.displayName).tag(priority)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text(appState.profile.shoppingPriority.blurb)
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)

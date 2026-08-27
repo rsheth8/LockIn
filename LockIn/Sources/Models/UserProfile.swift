@@ -142,6 +142,14 @@ struct UserProfile: Codable, Equatable, Identifiable {
     var accountabilityMode: Set<AccountabilityTrigger>
     var weightHistory: [WeightEntry]
 
+    /// How Shop Smart weighs your targets against the label. Optional on
+    /// purpose: `UserProfile` uses synthesised `Codable`, which throws on a
+    /// missing key for a non-optional field — so adding one outright would fail
+    /// to decode every profile saved before this shipped, and `loadProfile()`
+    /// returning nil drops the user back into the quiz with their plan gone.
+    /// Read it through `shoppingPriority`.
+    var shoppingPriorityRaw: ShoppingPriority?
+
     /// A blank profile for someone starting the quiz — intentionally neutral
     /// rather than pre-filled with one person's situation.
     static var blank: UserProfile {
@@ -167,8 +175,16 @@ struct UserProfile: Codable, Equatable, Identifiable {
             toneIntensity: .toughLove,
             accentColor: .ember,
             accountabilityMode: [.scheduledCheckIns],
-            weightHistory: []
+            weightHistory: [],
+            shoppingPriorityRaw: nil
         )
+    }
+
+    /// Defaults to balanced — the answer that's wrong in the fewest directions
+    /// for someone who has never opened the setting.
+    var shoppingPriority: ShoppingPriority {
+        get { shoppingPriorityRaw ?? .balanced }
+        set { shoppingPriorityRaw = newValue }
     }
 
     /// Rahil's preset — used by the "start from a preset" path so an existing

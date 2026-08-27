@@ -19,9 +19,17 @@ struct LogMealView: View {
 
     /// Called with the finished entry so the caller can commit it to AppState.
     let onSave: (LoggedMeal) -> Void
+    /// Targets and log-derived suggestions for the Shop Smart sheet. Optional
+    /// so this screen still stands up without them.
+    let shopSmart: ShopSmartContext?
 
-    init(replacingEvent: ScheduledEvent? = nil, onSave: @escaping (LoggedMeal) -> Void) {
+    init(
+        replacingEvent: ScheduledEvent? = nil,
+        shopSmart: ShopSmartContext? = nil,
+        onSave: @escaping (LoggedMeal) -> Void
+    ) {
         _model = StateObject(wrappedValue: LogMealViewModel(replacingEvent: replacingEvent))
+        self.shopSmart = shopSmart
         self.onSave = onSave
     }
 
@@ -80,7 +88,7 @@ struct LogMealView: View {
                     .ignoresSafeArea()
             }
             .sheet(isPresented: $showingShopSmart) {
-                GrocerySearchView()
+                GrocerySearchView(context: shopSmart)
             }
         }
     }

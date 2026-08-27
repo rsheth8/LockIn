@@ -22,14 +22,18 @@ final class GrocerySearchViewModel: ObservableObject {
     @Published private(set) var state: State = .idle
 
     private let provider: GroceryProvider
+    /// nil when the profile isn't available — ranking then falls back to the
+    /// label's own read, which is still a useful answer.
+    private let goal: GoalContext?
     private var searchTask: Task<Void, Never>?
 
     /// Long enough that typing "greek yogurt" is one request rather than twelve,
     /// short enough not to feel laggy after the last keystroke.
     private let debounce = Duration.milliseconds(400)
 
-    init(provider: GroceryProvider = OpenFoodFactsGroceryProvider()) {
+    init(provider: GroceryProvider = OpenFoodFactsGroceryProvider(), goal: GoalContext? = nil) {
         self.provider = provider
+        self.goal = goal
     }
 
     deinit {
@@ -63,7 +67,7 @@ final class GrocerySearchViewModel: ObservableObject {
             do {
                 let items = try await self.provider.search(trimmed)
                 guard !Task.isCancelled else { return }
-                let ranked = Self.rank(items)
+                let ranked = Self.rank(items, goal: self.goal)
                 self.state = ranked.isEmpty ? .empty(query: trimmed) : .results(ranked)
             } catch {
                 guard !Task.isCancelled else { return }
@@ -82,7 +86,7 @@ final class GrocerySearchViewModel: ObservableObject {
     // Pure and static so the ordering rules can be tested without a network, a
     // debounce, or a main actor.
 
-    nonisolated static func rank(_ items: [GroceryItem]) -> [ScoredGroceryItem] {
+    nonisolated static func rank(_ items: [GroceryItem], goal: GoalContext? = nil) -> [ScoredGroceryItem] {
         // Open Food Facts holds a separate record per region and per pack size,
         // so one shelf item can arrive four times under the same name. Dedupe
         // on the name the user would read, keeping the first — the one the
@@ -91,7 +95,7 @@ final class GrocerySearchViewModel: ObservableObject {
         let unique = items.filter { seen.insert($0.name.lowercased()).inserted }
 
         return unique
-            .map { ScoredGroceryItem(item: $0, score: SmartChoiceEngine.score($0)) }
+            .map { ScoredGroceryItem(item: $0, score: SmartChoiceEngine.score($0, context: goal)) }
             .sorted { left, right in
                 // Anything judged on one or two stray numbers sorts below
                 // everything that was judged properly, whatever it scored.

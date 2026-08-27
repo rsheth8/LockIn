@@ -60,7 +60,14 @@ struct TodayView: View {
             }
         }
         .sheet(item: $logTarget) { target in
-            LogMealView(replacingEvent: target.event) { meal in
+            // Built here, where the profile and the log actually live, rather
+            // than reached for from inside two nested sheets.
+            LogMealView(
+                replacingEvent: target.event,
+                shopSmart: ShopSmartContext.build(
+                    profile: appState.profile, loggedMeals: appState.loggedMeals
+                )
+            ) { meal in
                 withAnimation(.snappy) { appState.log(meal) }
             }
         }

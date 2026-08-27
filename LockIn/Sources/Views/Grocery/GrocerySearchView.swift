@@ -10,8 +10,11 @@ struct GrocerySearchView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accent) private var accent
 
-    init(provider: GroceryProvider = OpenFoodFactsGroceryProvider()) {
-        _model = StateObject(wrappedValue: GrocerySearchViewModel(provider: provider))
+    private let context: ShopSmartContext?
+
+    init(context: ShopSmartContext? = nil, provider: GroceryProvider = OpenFoodFactsGroceryProvider()) {
+        self.context = context
+        _model = StateObject(wrappedValue: GrocerySearchViewModel(provider: provider, goal: context?.goal))
     }
 
     var body: some View {
@@ -110,54 +113,61 @@ struct GrocerySearchView: View {
     }
 
     private var introSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("What it does").ledgerLabel()
-            Text("Search a grocery item and it's ranked on what the label actually says — sugar, saturated fat, sodium, fibre, protein and how processed it is. Then take the pick straight to Walmart or Target.")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.inkMuted)
-                .fixedSize(horizontal: false, vertical: true)
-
-            LedgerRule()
-
-            Text("Try")
-                .ledgerLabel()
-            // Suggestions rather than an empty screen, chosen to show the tool
-            // at its best: packaged goods are where the label database is deep.
-            // Two per row so the longer ones don't clip on a small phone.
-            VStack(spacing: 8) {
-                ForEach(Self.suggestions, id: \.self) { pair in
-                    HStack(spacing: 8) {
-                        ForEach(pair, id: \.self) { suggestion in
-                            suggestionChip(suggestion)
-                        }
-                    }
+        VStack(alignment: .leading, spacing: 14) {
+            if let suggestions = context?.suggestions, !suggestions.isEmpty {
+                Text("Worth a look").ledgerLabel()
+                ForEach(suggestions) { suggestion in
+                    suggestionCard(suggestion)
                 }
+                Text("Drawn from the meals you've logged. It reads the mix of what you eat, not your daily totals — meals you followed off the plan never reach the log.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("What it does").ledgerLabel()
+                Text("Search a grocery item and it's ranked on what the label says — sugar, saturated fat, sodium, fibre, processing — and on how well it serves your macro targets. Then take the pick straight to Walmart or Target.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    private static let suggestions = [
-        ["greek yogurt", "peanut butter"],
-        ["protein bar", "granola"],
-        ["oat milk", "tortilla"]
-    ]
-
-    private func suggestionChip(_ suggestion: String) -> some View {
+    /// A prompt with its reasoning attached. The claim is the point — a bare
+    /// "try greek yogurt" is a guess, and "your logged meals average 4 g
+    /// protein per 100 kcal against the 8 you need" is an argument the user can
+    /// check and disagree with.
+    private func suggestionCard(_ suggestion: GrocerySuggestion) -> some View {
         Button {
             Haptics.tap()
-            model.query = suggestion
+            model.query = suggestion.query
         } label: {
-            Text(suggestion)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Theme.ink)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(Theme.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Theme.rule, lineWidth: 1)
-                )
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .top, spacing: 8) {
+                    Text(suggestion.headline)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                        .multilineTextAlignment(.leading)
+                    Spacer(minLength: 8)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(accent.color)
+                        .padding(.top, 3)
+                }
+                Text(suggestion.detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.inkMuted)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(Theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Theme.rule, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }
