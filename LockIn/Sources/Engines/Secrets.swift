@@ -29,6 +29,21 @@ enum Secrets {
     /// fewer recipes.
     static var hasSpoonacular: Bool { spoonacularKey != nil }
 
+    /// USDA FoodData Central. Absent means Shop Smart searches Open Food Facts
+    /// alone — branded goods still work, whole foods stay thin.
+    ///
+    /// Free from https://fdc.nal.usda.gov/api-key-signup.html, issued instantly,
+    /// no card. 1,000 requests/hour, which a debounced search never approaches.
+    static var usdaKey: String? {
+        guard let key = values["USDAAPIKey"] as? String,
+              !key.isEmpty,
+              key != "PASTE_YOUR_USDA_KEY_HERE"
+        else { return nil }
+        return key
+    }
+
+    static var hasUSDA: Bool { usdaKey != nil }
+
     /// OAuth client ID from the Google Cloud console. Absent means the Google
     /// sign-in button stays hidden rather than failing when tapped.
     static var googleClientID: String? {

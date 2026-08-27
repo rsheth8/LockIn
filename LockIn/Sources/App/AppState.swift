@@ -15,6 +15,8 @@ final class AppState: ObservableObject {
     /// is regenerated from the plan each launch and these are facts about what
     /// actually happened.
     @Published var loggedMeals: [LoggedMeal] = []
+    /// Things picked out in Shop Smart and not yet bought.
+    @Published var shoppingList: [ShoppingListItem] = []
 
 #if DEBUG
     /// True while "Watch the demo" is running. RootView checks this before
@@ -35,6 +37,7 @@ final class AppState: ObservableObject {
         self.streak = store.loadStreak() ?? StreakStatus()
         self.dayRecords = store.loadDayRecords()
         self.loggedMeals = store.loadLoggedMeals()
+        self.shoppingList = store.loadShoppingList()
     }
 
     /// Pulls an existing plan out of the signed-in user's private iCloud —
@@ -205,6 +208,42 @@ final class AppState: ObservableObject {
         persistLoggedMeals()
     }
 
+    // MARK: - Shopping list
+
+    func isOnShoppingList(_ id: String) -> Bool {
+        shoppingList.contains { $0.id == id }
+    }
+
+    /// Adds an item, or does nothing if it's already there.
+    ///
+    /// Idempotent rather than appending a duplicate: tapping Add twice is a
+    /// slip, not a request for two tubs, and a list with the same thing on it
+    /// twice is worse than useless in a shop.
+    func addToShoppingList(_ scored: ScoredGroceryItem) {
+        guard !isOnShoppingList(scored.item.id) else { return }
+        shoppingList.append(ShoppingListItem(from: scored))
+        persistShoppingList()
+    }
+
+    func removeFromShoppingList(_ id: String) {
+        shoppingList.removeAll { $0.id == id }
+        persistShoppingList()
+    }
+
+    func toggleShoppingItem(_ id: String) {
+        guard let index = shoppingList.firstIndex(where: { $0.id == id }) else { return }
+        shoppingList[index].isChecked.toggle()
+        persistShoppingList()
+    }
+
+    /// Clears what's been ticked off, leaving the rest. The end-of-trip action —
+    /// deliberately not a "clear all", which would take the things you didn't
+    /// find with it.
+    func clearCheckedShoppingItems() {
+        shoppingList.removeAll(where: \.isChecked)
+        persistShoppingList()
+    }
+
     // MARK: - Persistence
     //
     // Every mutation writes through these rather than touching `store`
@@ -223,6 +262,11 @@ final class AppState: ObservableObject {
     private func persistLoggedMeals() {
         guard shouldPersist else { return }
         store.saveLoggedMeals(loggedMeals)
+    }
+
+    private func persistShoppingList() {
+        guard shouldPersist else { return }
+        store.saveShoppingList(shoppingList)
     }
 
     private func persistProfile(_ profile: UserProfile) {
@@ -384,6 +428,7 @@ final class AppState: ObservableObject {
         dayRecords = seeded
         streak = DemoMode.streak
         loggedMeals = DemoMode.loggedMeals
+        shoppingList = []
         todaySchedule = DemoMode.todaySchedule(profile: demoProfile)
         onboardingComplete = true
         demoTour.stepIndex = 0
@@ -400,6 +445,7 @@ final class AppState: ObservableObject {
         streak = store.loadStreak() ?? StreakStatus()
         dayRecords = store.loadDayRecords()
         loggedMeals = store.loadLoggedMeals()
+        shoppingList = store.loadShoppingList()
         todaySchedule = store.loadSchedule()
     }
 #endif

@@ -8,6 +8,7 @@ import SwiftUI
 /// record looks sparse.
 struct GroceryItemDetailView: View {
     let scored: ScoredGroceryItem
+    @EnvironmentObject var appState: AppState
     @Environment(\.accent) private var accent
 
     private var item: GroceryItem { scored.item }
@@ -19,6 +20,7 @@ struct GroceryItemDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     header
+                    addToListButton
                     LedgerRule()
                     verdict
                     LedgerRule()
@@ -64,6 +66,38 @@ struct GroceryItemDetailView: View {
             Spacer(minLength: 8)
             ScoreBadge(score: score, large: true)
         }
+    }
+
+    /// Toggles rather than only adding, so the screen can undo itself — the
+    /// most likely correction right after adding is realising you didn't mean
+    /// to, and making the user go find the list to fix that is a poor trade.
+    private var addToListButton: some View {
+        let isOnList = appState.isOnShoppingList(item.id)
+        return Button {
+            Haptics.tap()
+            if isOnList {
+                appState.removeFromShoppingList(item.id)
+            } else {
+                appState.addToShoppingList(scored)
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isOnList ? "checkmark" : "plus")
+                    .font(.system(size: 14, weight: .semibold))
+                Text(isOnList ? "On your list" : "Add to list")
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
+            .background(isOnList ? Theme.surface : Theme.ink)
+            .foregroundStyle(isOnList ? Theme.ink : Theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Theme.rule, lineWidth: isOnList ? 1 : 0)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var verdict: some View {
@@ -143,12 +177,19 @@ struct GroceryItemDetailView: View {
         }
     }
 
+    /// Attribution names the actual source. The two differ in kind — a
+    /// crowd-sourced packet label and a USDA lab assay deserve different levels
+    /// of trust, and saying "Open Food Facts" under a USDA figure would be
+    /// straightforwardly false.
     private var disclaimer: some View {
-        Text("Score is a rough guide from public label data on Open Food Facts — crowd-sourced, sometimes incomplete, and no substitute for reading the box.")
-            .font(.system(size: 11))
-            .foregroundStyle(Theme.inkMuted)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.top, 4)
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Source · \(item.source.label)").ledgerLabel()
+            Text("\(item.source.blurb) The score is a rough guide, not a medical opinion.")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 4)
     }
 
     // MARK: - Pieces

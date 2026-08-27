@@ -16,6 +16,7 @@ final class DemoModeTests: XCTestCase {
         let streak: StreakStatus?
         let dayRecords: [DayRecord]
         let loggedMeals: [LoggedMeal]
+        let shoppingList: [ShoppingListItem]
     }
 
     private func snapshot() -> StoreSnapshot {
@@ -24,7 +25,8 @@ final class DemoModeTests: XCTestCase {
             schedule: store.loadSchedule(),
             streak: store.loadStreak(),
             dayRecords: store.loadDayRecords(),
-            loggedMeals: store.loadLoggedMeals()
+            loggedMeals: store.loadLoggedMeals(),
+            shoppingList: store.loadShoppingList()
         )
     }
 

@@ -8,7 +8,7 @@ final class PersistenceStore {
     private let defaults = UserDefaults.standard
 
     private enum Key: String {
-        case profile, schedule, streak, progressPhotos, dayRecords, loggedMeals
+        case profile, schedule, streak, progressPhotos, dayRecords, loggedMeals, shoppingList
     }
 
     func saveProfile(_ profile: UserProfile) {
@@ -52,6 +52,16 @@ final class PersistenceStore {
 
     func loadLoggedMeals() -> [LoggedMeal] {
         load([LoggedMeal].self, key: .loggedMeals) ?? []
+    }
+
+    /// The Shop Smart list. Survives relaunch by design — it's written at the
+    /// kitchen table and read in the shop, which is a different session.
+    func saveShoppingList(_ items: [ShoppingListItem]) {
+        save(items, key: .shoppingList)
+    }
+
+    func loadShoppingList() -> [ShoppingListItem] {
+        load([ShoppingListItem].self, key: .shoppingList) ?? []
     }
 
     func saveDayRecords(_ records: [DayRecord]) {

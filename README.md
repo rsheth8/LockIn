@@ -47,6 +47,11 @@ your Apple Developer Team ID and re-run `xcodegen generate`.
   barcode, nutrition label, or text. Photo recognition and label OCR both run
   fully on-device. Meals can be built from several items and every number is
   editable, before or after saving. See [Meal logging](#meal-logging) below.
+- **Shop Smart** (`SmartChoiceEngine`, `CompositeGroceryProvider`,
+  `GrocerySuggestionEngine`, `RetailerLink`) — search groceries across Open
+  Food Facts and USDA, ranked on the label *and* on your macro targets, with a
+  saved shopping list and a hand-off to Walmart or Target. See
+  [Shop Smart](#shop-smart) below.
 - **`CalendarManager`** — EventKit read access for real busy blocks.
 - **`HealthKitManager`** — weight/workout read+write, sleep/active-energy read.
 - **`WeightSyncEngine`** — pulls latest HealthKit weight (rate-limited to once
@@ -88,6 +93,17 @@ cp LockIn/Sources/Resources/Secrets.example.plist LockIn/Sources/Resources/Secre
   The free tier is **150 points/day**. A cold app launch spends a few on the
   weekly recipe pool, and each dish nutrition estimate costs 1 — so normal use
   is comfortably inside it, but a day of heavy testing can run it down.
+- **USDA FoodData Central** (`USDAAPIKey`) — adds whole foods to Shop Smart.
+  Free, issued instantly by email, no card, 1,000 requests/hour:
+  <https://fdc.nal.usda.gov/api-key-signup.html>
+
+  This is the fix for the one thing Open Food Facts is bad at. That database
+  catalogues *packages*, so searching "chicken breast" or "broccoli" returns
+  ready-meals and marinades. USDA's Foundation and SR Legacy datasets are
+  laboratory composition for generic whole foods — the exact complement.
+  Without the key Shop Smart still works on branded goods alone, and
+  `USDAClientTests` keeps running either way: the decoding is tested against
+  the wire types directly, so only the one no-key test changes behaviour.
 - **Google** (`GoogleClientID`) — enables the Google sign-in button. Also paste
   your `REVERSED_CLIENT_ID` into `GOOGLE_REVERSED_CLIENT_ID` in `project.yml`
   so the OAuth redirect resolves. Without it the button stays hidden and Apple
@@ -315,6 +331,51 @@ released — never written to the sandbox, the Photos library, or iCloud, and
 never uploaded. `LoggedMeal` holds no image data at all; a log entry is a name,
 a portion string and four numbers (a few hundred bytes), so the log stays cheap
 to keep forever. A test asserts the encoded record contains no image payload.
+
+## Shop Smart
+
+Reached from **Log a meal → Shop Smart**. Search a grocery item, see it ranked
+on what the label says *and* on how well it serves your targets, add it to a
+list, and hand off to Walmart or Target.
+
+**Two catalogs, asked concurrently** (`CompositeGroceryProvider`). Open Food
+Facts covers packages — branded goods, barcodes, Nutri-Score, NOVA. USDA covers
+generic whole foods with laboratory composition. A provider failing is not a
+failed search: you get the shorter shelf, which is also the everyday path when
+no USDA key is configured. Only every provider failing surfaces an error.
+
+**The score is a blend**, weighted by a three-way preset in Settings
+(Healthiest / Balanced / My targets):
+
+- *Label read* — Nutri-Score when the record has one, since a food agency
+  computed it from the full panel; otherwise the UK FSA's per-100 g
+  traffic-light thresholds. NOVA class and additive count layer over both,
+  because neither accounts for processing.
+- *Goal fit* — protein per calorie against your own targets. Per-100 g protein
+  flatters anything dry; the ratio asks what a cut actually turns on. Calorie
+  density is read *through* the goal, since 550 kcal/100 g is a problem in a
+  deficit and the point in a surplus.
+
+Missing data is treated as missing, never as zero — a record with no sugar
+recorded is not sugar-free. Those score neutral and are marked **thin**, and
+thin records sort below properly-judged ones however well they scored.
+
+**Suggestions** on the landing screen come from your meal log, and are careful
+about what they claim. `loggedMeals` holds only *off-plan* meals, so "you're
+30 g under protein" would be a lie on a day you ate exactly as planned. What
+the log supports is a claim about the **composition** of what you reach for,
+which is also what maps onto a trolley. Quiet within 15% of target, won't
+generalise from fewer than four meals, and the staples behind it are diet-gated.
+
+**No prices, and the hand-off is a search.** Neither retailer offers a
+sanctioned way to read prices or link to a specific product, so the last step
+is yours — said plainly on the detail screen rather than left to be discovered.
+
+**The shopping list** is a snapshot, not a live view: the score is copied in
+when you add the item. It has to render in a shop with no signal, and the
+number shown should be the number you decided on — silently re-scoring because
+a crowd-sourced record was edited would change why something is on the list
+without saying so.
 
 ## Demo mode
 

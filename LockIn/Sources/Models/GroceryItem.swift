@@ -18,6 +18,9 @@ struct GroceryItem: Equatable, Identifiable {
     let imageURL: URL?
     let per100g: MacroTargetsLite
     let quality: GroceryQuality
+    /// Which database this came out of. Kept so the UI can attribute the
+    /// numbers honestly — the two differ in kind, not just in coverage.
+    var source: GrocerySource = .openFoodFacts
 
     /// What to type into a retailer's search box.
     ///
@@ -25,8 +28,45 @@ struct GroceryItem: Equatable, Identifiable {
     /// filter — the full catalog name ("Chobani Greek Yogurt Nonfat Plain
     /// Blended Vanilla 5.3 oz") reliably returns nothing, while the first few
     /// words find the shelf.
+    ///
+    /// Commas go first. USDA names them in inverted form ("Chicken breast,
+    /// roll, oven-roasted") and a retailer search takes the punctuation
+    /// literally.
     var searchTerm: String {
-        name.split(separator: " ").prefix(8).joined(separator: " ")
+        name
+            .replacingOccurrences(of: ",", with: " ")
+            .split(separator: " ")
+            .prefix(8)
+            .joined(separator: " ")
+    }
+}
+
+/// Where a product's numbers came from.
+///
+/// The distinction matters enough to show. Open Food Facts is label data typed
+/// in by whoever last scanned the packet — broad, current, and uneven. USDA is
+/// laboratory composition published by a government agency — narrow, generic,
+/// and about as authoritative as food data gets. Neither is simply better, and
+/// telling the user which they're looking at is the same instinct as labelling
+/// a barcode differently from a guess-from-the-name.
+enum GrocerySource: String, Codable, Equatable {
+    case openFoodFacts
+    case usda
+
+    var label: String {
+        switch self {
+        case .openFoodFacts: return "Open Food Facts"
+        case .usda: return "USDA FoodData Central"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .openFoodFacts:
+            return "Crowd-sourced label data — broad and current, sometimes incomplete. Check the box."
+        case .usda:
+            return "Laboratory composition for a generic whole food, published by the USDA. No brand, no packet — the shop's version will differ a little."
+        }
     }
 }
 

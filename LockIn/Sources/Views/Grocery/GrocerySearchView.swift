@@ -12,9 +12,13 @@ struct GrocerySearchView: View {
 
     private let context: ShopSmartContext?
 
-    init(context: ShopSmartContext? = nil, provider: GroceryProvider = OpenFoodFactsGroceryProvider()) {
+    @EnvironmentObject var appState: AppState
+
+    init(context: ShopSmartContext? = nil, provider: GroceryProvider? = nil) {
         self.context = context
-        _model = StateObject(wrappedValue: GrocerySearchViewModel(provider: provider, goal: context?.goal))
+        _model = StateObject(wrappedValue: GrocerySearchViewModel(
+            provider: provider ?? CompositeGroceryProvider.standard, goal: context?.goal
+        ))
     }
 
     var body: some View {
@@ -37,9 +41,27 @@ struct GrocerySearchView: View {
                     Button("Done") { dismiss() }
                         .foregroundStyle(Theme.inkMuted)
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink(value: ShoppingListDestination()) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "list.bullet")
+                                .font(.system(size: 14, weight: .semibold))
+                            // The count is the point — it's what tells you
+                            // there's something waiting without opening it.
+                            if !appState.shoppingList.isEmpty {
+                                Text("\(appState.shoppingList.count)")
+                                    .font(Theme.mono(13, weight: .semibold))
+                            }
+                        }
+                        .foregroundStyle(accent.color)
+                    }
+                }
             }
             .navigationDestination(for: ScoredGroceryItem.self) { scored in
                 GroceryItemDetailView(scored: scored)
+            }
+            .navigationDestination(for: ShoppingListDestination.self) { _ in
+                ShoppingListView()
             }
         }
     }
@@ -214,6 +236,10 @@ struct GrocerySearchView: View {
         }
     }
 }
+
+/// Navigation tag for the list. A distinct type rather than a `Bool` binding so
+/// it shares the one `NavigationStack` path with the item destination.
+struct ShoppingListDestination: Hashable {}
 
 /// One product on the shelf.
 struct GroceryResultRow: View {

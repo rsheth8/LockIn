@@ -384,7 +384,8 @@ actor OpenFoodFactsClient {
                     novaGroup: nova_group,
                     additivesCount: additives_n,
                     ingredientCount: ingredients_n
-                )
+                ),
+                source: .openFoodFacts
             )
         }
     }
