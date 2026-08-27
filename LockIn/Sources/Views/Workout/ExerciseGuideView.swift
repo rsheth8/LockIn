@@ -29,7 +29,10 @@ struct ExerciseGuideView: View {
                                     .foregroundStyle(accent.color)
                             }
                             if let tempo = guide.tempo {
-                                TempoPacerView(tempo: tempo)
+                                TempoPacerView(
+                                    tempo: tempo,
+                                    animation: MovementAnimationLibrary.animation(for: exerciseName)
+                                )
                             }
                             steps("Set up", guide.setup, numbered: true)
                             steps("The rep", guide.execution, numbered: true)

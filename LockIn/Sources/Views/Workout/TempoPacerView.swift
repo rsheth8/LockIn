@@ -13,6 +13,10 @@ import Combine
 /// Follow it with your eyes for a rep or two and your tempo fixes itself.
 struct TempoPacerView: View {
     let tempo: MovementTempo
+    /// The figure, when the movement is one a side-on drawing can show
+    /// honestly. Driven by this same clock, so the rep on screen takes exactly
+    /// as long as the tempo prescribes.
+    var animation: MovementAnimation?
     @Environment(\.accent) private var accent
 
     /// Seconds into the current cycle.
@@ -33,6 +37,22 @@ struct TempoPacerView: View {
                 Text(tempo.summary)
                     .font(Theme.mono(11, weight: .semibold))
                     .foregroundStyle(Theme.inkMuted)
+            }
+
+            if let animation {
+                StickFigureView(
+                    pose: animation.pose(phase: phaseIndex, progress: phaseProgress),
+                    platform: animation.platform,
+                    showsFloor: animation.showsFloor,
+                    accent: accent.color
+                )
+                .frame(height: 168)
+                .frame(maxWidth: .infinity)
+
+                Text(animation.viewNote)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.inkFaint)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -106,12 +126,29 @@ struct TempoPacerView: View {
     // MARK: - Cycle
 
     private var currentPhase: MovementTempo.Phase? {
+        tempo.phases.indices.contains(phaseIndex) ? tempo.phases[phaseIndex] : tempo.phases.last
+    }
+
+    /// Which phase the clock is in, and how far through it — the two numbers
+    /// both the track and the figure are drawn from.
+    private var phaseIndex: Int {
+        var cursor = 0.0
+        for (index, phase) in tempo.phases.enumerated() {
+            cursor += phase.seconds
+            if elapsed < cursor { return index }
+        }
+        return max(0, tempo.phases.count - 1)
+    }
+
+    private var phaseProgress: Double {
         var cursor = 0.0
         for phase in tempo.phases {
+            if elapsed < cursor + phase.seconds {
+                return phase.seconds > 0 ? (elapsed - cursor) / phase.seconds : 1
+            }
             cursor += phase.seconds
-            if elapsed < cursor { return phase }
         }
-        return tempo.phases.last
+        return 1
     }
 
     private var remainingInPhase: Double {

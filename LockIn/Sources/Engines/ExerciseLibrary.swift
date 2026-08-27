@@ -411,7 +411,14 @@ enum ExerciseLibrary {
                 "Shrugging the traps up to move the weight.",
                 "Pulling to the chest instead of the face — that's a row, not a face pull."
             ],
-            tempo: .lower(2, hold: 1, drive: 1, downLabel: "Return", driveLabel: "Pull apart"),
+            // Written out rather than using `.lower`, which puts the pause
+            // between the return and the pull — i.e. at the resting position.
+            // The hold on a face pull belongs at the end range.
+            tempo: MovementTempo(phases: [
+                .init(label: "Pull apart", seconds: 1),
+                .init(label: "Hold", seconds: 1),
+                .init(label: "Return", seconds: 2)
+            ]),
             swap: "A resistance band around any solid anchor works just as well here.",
             searchTerm: "face pull exercise form rotator cuff"
         ),
