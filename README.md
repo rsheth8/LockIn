@@ -1,5 +1,10 @@
 # LockIn
 
+<p align="center">
+  <img src="docs/brand/logo.png" width="168" alt="LockIn">
+</p>
+
+
 Native iOS daily-driver: wake, caffeine cutoff, weighed macro meals, workouts around your real calendar, sleep, and accountability that uses *your* goals — not generic copy.
 
 | | |
@@ -122,3 +127,10 @@ Notes:
 See doc comments at the top of each Engine file — TDEE formula, protein
 target, deficit size, and sleep-timing rules are each cited to the specific
 research/guideline they're based on.
+
+## Contributing
+
+PRs and issues welcome. How to run tests, env vars, and the expected layout: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Don't commit `.env`, API keys, or personal recordings.
+
