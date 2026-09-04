@@ -1,10 +1,15 @@
 # LockIn
 
-A native iOS app that plans and enforces your daily routine — wake, caffeine,
-weighed macro meals (with prep-ahead reminders), workouts slotted around your
-real calendar, sleep schedule, and a tough-love accountability system.
+Native iOS daily-driver: wake, caffeine cutoff, weighed macro meals, workouts around your real calendar, sleep, and accountability that uses *your* goals — not generic copy.
 
-## Status: daily-driver ready
+| | |
+| --- | --- |
+| **Author** | [Rahil Sheth](https://github.com/rsheth8) |
+| **Repo** | [rsheth8/LockIn](https://github.com/rsheth8/LockIn) |
+| **Stack** | SwiftUI, XcodeGen, SwiftData, EventKit, HealthKit, Screen Time (optional), iCloud |
+| **Status** | Daily-driver ready for a personal / TestFlight build. Family Controls needs Apple approval on a real device. |
+
+## Open in Xcode
 
 `LockIn/` is a full SwiftUI + XcodeGen project. Open it in Xcode:
 
