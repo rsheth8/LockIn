@@ -1,18 +1,25 @@
-# LockIn
-
 <p align="center">
-  <img src="docs/brand/logo.png" width="168" alt="LockIn">
+  <img src="docs/brand/logo.png" width="128" alt="LockIn">
 </p>
 
+<h1 align="center">LockIn</h1>
 
-Native iOS daily-driver: wake, caffeine cutoff, weighed macro meals, workouts around your real calendar, sleep, and accountability that uses *your* goals — not generic copy.
+<p align="center">
+  A day that respects your calendar, your macros, and the time you said you’d sleep.
+</p>
 
-| | |
-| --- | --- |
-| **Author** | [Rahil Sheth](https://github.com/rsheth8) |
-| **Repo** | [rsheth8/LockIn](https://github.com/rsheth8/LockIn) |
-| **Stack** | SwiftUI, XcodeGen, SwiftData, EventKit, HealthKit, Screen Time (optional), iCloud |
-| **Status** | Daily-driver ready for a personal / TestFlight build. Family Controls needs Apple approval on a real device. |
+<p align="center">
+  <a href="https://github.com/rsheth8/LockIn">Source</a>&nbsp;·&nbsp;<a href="CONTRIBUTING.md">Run locally</a>
+</p>
+
+<p align="center">
+  <img alt="Swift" src="https://img.shields.io/badge/SwiftUI-F05138?style=flat-square&logo=swift&logoColor=white">
+  <img alt="iOS" src="https://img.shields.io/badge/HealthKit%20·%20EventKit-000000?style=flat-square">
+</p>
+
+<p align="center"><sub>Personal / TestFlight. Family Controls needs Apple’s approval on a real device.</sub></p>
+
+---
 
 ## Open in Xcode
 
